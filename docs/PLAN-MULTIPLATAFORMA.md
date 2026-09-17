@@ -202,6 +202,13 @@ común.
 - **2.7 [M] `install.sh` para Mac** (o `install.py` común): `brew install
   portaudio mpv yt-dlp` (mpv/yt-dlp sólo con backend mpv), `ollama`, Piper,
   permisos de Input Monitoring/Micrófono explicados.
+- **2.8 [X] Que no se pierda el arranque de la frase.** Medido en la fase
+  1: en macOS pasan 410-460 ms entre `on_down` y la primera muestra
+  grabada, y con frases cortas Whisper transcribe un fragmento o inventa
+  (ver "Defecto encontrado" en "Medido en macOS"). Opciones: beep sin
+  `wait()`, abrir el `InputStream` antes del beep, o mantener el
+  dispositivo de entrada abierto. Camino tecla → voz: medir en Linux y en
+  Mac antes y después, como pide AGENTS.md.
 
 ### Fase 3 — Producto (después de que ande)
 
@@ -273,6 +280,96 @@ se loguea una vez, no en cada tecla.
 
 Son una llamada por turno, no por paso de rampa: entran cómodas en el
 presupuesto y AppleScript es la forma más corta de decirlo.
+
+### El loop completo, por etapa (verificación 1.8)
+
+Turnos reales por voz, con Groq configurado, `qwen3:4b-instruct` local y
+Piper `es_AR-daniela-high`:
+
+| Etapa | Medido |
+|---|---|
+| Transcripción (Groq online) | **0,39-0,55 s** |
+| Cerebro, respuesta directa sin tool | 0,55-0,77 s |
+| Cerebro, con una tool | ~1,0 s |
+| Cerebro, con dos tools en el mismo turno | 6,4 s (incluye ejecutar las dos) |
+| TTS: síntesis | **0,32 s** (27 chars) a **1,04 s** (72 chars) |
+| TTS: total que loguea el daemon | 3,0-5,6 s |
+| Total por turno | 4,0-5,9 s |
+
+El `tts (3.x s)` del log **no es latencia**: `speak()` sintetiza y
+reproduce, así que incluye la duración del audio hablado (1,4 s para 27
+chars, 4,4 s para 72). Lo que se paga como espera es la síntesis, 0,3-1,0
+s. Mismo código que en Linux, no hay nada específico de Mac acá. Cargar el
+modelo de voz: 0,75 s.
+
+Arranque completo (`./tero`) con Groq configurado: ~25 s hasta "Tero
+escuchando", casi todo Ollama cargando el modelo de lenguaje.
+
+### Defecto encontrado: se pierde el arranque de cada frase
+
+Con frases cortas ("qué hora es") la transcripción llega cortada o
+directamente inventada por Whisper a partir del fragmento ("¡Buenos
+días!"). Medido: desde `on_down` hasta que el micrófono realmente graba
+pasan **410-460 ms**, y son todos evitables:
+
+| Paso de `main.py::on_down` | Costo en macOS |
+|---|---|
+| `_beep(880)` (`sd.play` + `sd.wait`) | ~300 ms (80 ms de tono + ~220 ms de abrir el dispositivo de salida) |
+| `sd.InputStream(...)` | ~73 ms |
+| `.start()` | ~50 ms |
+
+En Linux esto no se notó nunca, probablemente porque PipeWire abre los
+dispositivos mucho más rápido. Candidatos de arreglo (ninguno aplicado, ver
+tarea 2.8): reproducir el beep sin `wait()`, abrir el `InputStream` antes
+del beep, o dejar el dispositivo de entrada abierto desde el arranque. Toca
+el camino tecla → voz, que es compartido con Linux, así que hay que medirlo
+en las dos plataformas.
+
+### Lo que falló, y por qué
+
+- **`play_music`: 403 de Spotify**, `"The user is not registered for this
+  application"`. No es del port: la app cuyo `client_id` está en
+  `config.toml` está en modo desarrollo y la cuenta de Spotify de esta Mac
+  no está en su lista de usuarios. Se arregla agregando la cuenta en el
+  dashboard de la app, o creando una app propia y cambiando el `client_id`.
+  `get_weather` (22,4°C en Buenos Aires) y `get_time` sí funcionan por voz.
+- **`soul_connector/system_audio.py` tira `FileNotFoundError: 'wpctl'`** en
+  un hilo, y el traceback ensucia `logs/tero.log`. No rompe nada (el
+  daemon sigue), y es exactamente lo que la tarea 2.5 prevé desactivar en
+  Mac.
+- **El soul-connector levantó igual**, sin cambios: pywebview loguea "QT
+  cannot be loaded" y cae solo al backend Cocoa (WKWebView). La tarea 2.5
+  es más chica de lo previsto: sacar `gui="qt"` y el `wmctrl`.
+
+### Micrófono y tecla en macOS, para el instalador
+
+- El **dispositivo de entrada por defecto** puede ser uno virtual (acá
+  había `Meet Recording Input`, de Google Meet, y también BlackHole, Teams
+  y Zoom): Tero graba del default del sistema, así que hay que elegir el
+  micrófono real en Ajustes → Sonido → Entrada. Con el virtual, todo turno
+  termina en `(audio en silencio)`.
+- Los **headsets con noise gate** (acá un PRO X Wireless) emiten silencio
+  digital exacto (rms 0,00000) cuando nadie habla: no confundir con falta
+  de permiso.
+- El permiso de **Micrófono** se puede consultar sin adivinar:
+  `AVCaptureDevice.authorizationStatusForMediaType_("soun")` (3 =
+  concedido).
+- **Los teclados internos de MacBook no tienen Control derecho**: el
+  default `ctrl_r` solo sirve con teclado externo. En el interno las
+  candidatas son `alt_r` (Option derecho) y `cmd_r`.
+
+### Whisper local (el respaldo, cuando Groq falla)
+
+`large-v3` con `faster-whisper`/CTranslate2 en esta Mac: la primera vez
+baja 3 GB de HuggingFace en 72 s, y después **carga en 5,8 s** con el
+modelo ya cacheado — eso es lo que se paga en cada arranque que necesite
+el respaldo. CTranslate2 avisa que convierte los pesos de float16 a
+float32 porque el backend no tiene float16 eficiente: corre en CPU, no hay
+GPU para esto en Mac.
+
+Cuánto tarda en **transcribir** no se midió acá a propósito: es la fase
+3.5 (`faster-whisper` CPU vs `mlx-whisper`, y elegir el default por OS),
+no la fase 1. Con Groq configurado, este camino es solo el respaldo.
 
 ### Permiso de Monitoreo de entrada
 
