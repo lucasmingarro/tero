@@ -23,9 +23,11 @@ repeats it:
 
 That section covers the Python packages; the rest of the tree:
 
-- `tero` — bash launcher: dependency checks, single instance (`flock`),
-  daemon, log rotation, soul-connector detection. Gets rewritten in Python
-  for the macOS port (plan § 1.6).
+- `tero.py` — launcher: dependency checks, single instance (`fcntl.flock`),
+  daemon, log rotation, soul-connector detection. `tero` is a one-line bash
+  wrapper around it (`exec uv run python tero.py`), kept so
+  `systemd/tero.service` and the README's symlink keep pointing at the same
+  name.
 - `install.sh` — guided system install. `systemd/tero.service` — user unit.
 - `docs/` — working plans. `logs/` and `voice/models/` are generated and
   gitignored.
