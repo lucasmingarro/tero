@@ -33,17 +33,19 @@ spinning up the TTS to announce it makes things worse. It goes out through
 a desktop notification and the log.
 """
 
-import subprocess
 import threading
 import time
 from typing import Callable
+
+from os_platform import get_platform
 
 HEALTH_EXIT_CODE = 3  # recognized by the ./tero launcher
 
 _INTERVAL_S = 5.0
 
-# MemAvailable (not "free"): it is the kernel's estimate of how much can be
-# requested without starting to swap, which is the number that matters here.
+# What the platform reports as available without the machine starting to
+# swap (MemAvailable on Linux, see Platform.available_ram_mb), not "free":
+# that is the number that matters here.
 _CRITICAL_RAM_MB = 400
 _WARNING_RAM_MB = 1200
 
@@ -58,52 +60,6 @@ _WARNING_SAMPLES = 2
 
 # So the same notification is not repeated every 5 seconds.
 _WARNING_QUIET_PERIOD_S = 300.0
-
-
-def _available_ram_mb() -> float | None:
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) / 1024
-    except Exception:
-        return None
-    return None
-
-
-def _gpu() -> dict | None:
-    """Temperature, free VRAM and whether the card is throttling itself.
-
-    `clocks_throttle_reasons.hw_thermal_slowdown` is a better signal than
-    comparing the temperature against a fixed number: it is the card saying
-    "I am at my limit", with this card's real limit, without having to guess
-    a threshold per model.
-    """
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=temperature.gpu,memory.total,memory.used,"
-                "clocks_throttle_reasons.hw_thermal_slowdown",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5.0,
-        )
-        if result.returncode != 0:
-            return None
-        temp, total, used, slowdown = (p.strip() for p in result.stdout.split(","))
-        return {
-            "temperature_c": float(temp),
-            "free_vram_mb": float(total) - float(used),
-            "thermal_slowdown": slowdown.lower() == "active",
-        }
-    except Exception:
-        # With no nvidia-smi (a machine without an NVIDIA GPU) there is
-        # nothing to watch here; the RAM watch keeps working anyway.
-        return None
 
 
 class HealthMonitor:
@@ -161,7 +117,8 @@ class HealthMonitor:
                 return
 
     def _check(self) -> None:
-        ram_mb = _available_ram_mb()
+        platform = get_platform()
+        ram_mb = platform.available_ram_mb()
         if ram_mb is not None:
             if self._count("critical_ram", ram_mb < _CRITICAL_RAM_MB) >= _RAM_SHUTDOWN_SAMPLES:
                 self._shutdown(
@@ -172,7 +129,7 @@ class HealthMonitor:
             if self._count("low_ram", ram_mb < _WARNING_RAM_MB) >= _WARNING_SAMPLES:
                 self._warn("low_ram", f"Queda poca memoria libre ({ram_mb:.0f} MB).")
 
-        gpu = _gpu()
+        gpu = platform.gpu_status()
         if gpu is None:
             return
 

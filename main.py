@@ -49,7 +49,7 @@ import sounddevice as sd
 
 import health
 from brain.router import Brain
-from os_platform import create_platform
+from os_platform import get_platform
 from soul_connector.server import SoulConnectorServer
 from soul_connector.system_audio import SystemAudioMonitor
 from tools import music, youtube
@@ -124,7 +124,10 @@ class Recorder:
 class Tero:
     def __init__(self, config: dict):
         self._config = config
-        self._platform = create_platform(key=config["key"]["name"])
+        # First call of the process, and the only one that passes the key:
+        # from here on the tools and health.py get this same instance with
+        # get_platform().
+        self._platform = get_platform(key=config["key"]["name"])
         self._recorder = Recorder(
             config["audio"]["sample_rate_hz"], config["audio"]["channels"],
             on_level=self._soul_connector_level,

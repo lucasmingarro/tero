@@ -9,12 +9,12 @@ accounts.
 """
 
 import random
-import subprocess
 import time
 from typing import Literal
 
 import httpx
 
+from os_platform import get_platform
 from tools import _spotify_auth, _youtube_favorites, _youtube_screen, tool
 
 _API = "https://api.spotify.com/v1"
@@ -81,16 +81,7 @@ _OPEN_WAIT_S = 25
 
 
 def _open_spotify() -> None:
-    # Spotify inherits the file descriptors of whoever opens it: without
-    # DEVNULL it writes its GTK warnings into logs/tero.log, and with
-    # start_new_session it does not hang off the daemon process.
-    subprocess.Popen(
-        ["xdg-open", "spotify:"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    get_platform().open_uri("spotify:")
 
 
 def _ensure_device() -> str | None:
@@ -241,10 +232,10 @@ def play_random_music() -> str:
     return f"Reproduciendo {first['name']!r} de {artist} (de tus favoritos)."
 
 
-# action -> (playerctl command, what Tero says). The playerctl commands
-# happen to match the action names one to one; the dict stays because it
-# also holds the Spanish confirmation and validates the action (an unknown
-# one raises KeyError, which tools.execute turns into an error message).
+# action -> (media action for the platform, what Tero says). The action
+# names happen to match one to one; the dict stays because it also holds
+# the Spanish confirmation and validates the action (an unknown one raises
+# KeyError, which tools.execute turns into an error message).
 _ACTIONS = {
     "play": ("play", "Listo, reproduciendo."),
     "pause": ("pause", "Listo, pausado."),
@@ -256,19 +247,13 @@ _ACTIONS = {
 def pause_spotify() -> None:
     """Pauses Spotify specifically (fixed MPRIS player name, "spotify") --
     for when a YouTube channel starts (see tools/youtube.py) and music must
-    not play at the same time. Unlike control_playback/_playerctl, which
-    deliberately does not target any particular player (it grabs "the first
-    available one", whichever that is), here Spotify specifically is what
-    matters -- with the YouTube window also registered as an MPRIS player,
-    leaving this untargeted could end up pausing YouTube itself instead of
-    Spotify. Silent if Spotify is not running."""
-    subprocess.run(["playerctl", "-p", "spotify", "pause"], capture_output=True, check=False)
-
-
-def _playerctl(command: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["playerctl", command], capture_output=True, text=True, check=False
-    )
+    not play at the same time. Unlike control_playback, which deliberately
+    does not target any particular player (it grabs "the first available
+    one", whichever that is), here Spotify specifically is what matters --
+    with the YouTube window also registered as an MPRIS player, leaving this
+    untargeted could end up pausing YouTube itself instead of Spotify.
+    Silent if Spotify is not running."""
+    get_platform().pause_player("spotify")
 
 
 @tool
@@ -280,17 +265,21 @@ def control_playback(action: Literal["play", "pause", "next", "previous"]) -> st
     `playerctl` installed.
     """
     command, done = _ACTIONS[action]
-    result = _playerctl(command)
-    if result.returncode != 0 and action == "play":
-        # "No player could handle this command": there is no player with an
-        # active MPRIS session, probably because Spotify is not even open.
-        # It gets opened (same as in play_music) and retried.
+    platform = get_platform()
+    try:
+        platform.media(command)
+        return done
+    except RuntimeError as error:
+        failure = error
+    if action == "play":
+        # No player took it, probably because Spotify is not even open. It
+        # gets opened (same as in play_music) and retried.
         _open_spotify()
         for wait in (2, 2, 3, 3):
             time.sleep(wait)
-            result = _playerctl(command)
-            if result.returncode == 0:
-                break
-    if result.returncode != 0:
-        return f"La herramienta 'control_playback' falló: {result.stderr.strip() or 'sin reproductor activo'}."
-    return done
+            try:
+                platform.media(command)
+                return done
+            except RuntimeError as error:
+                failure = error
+    return f"La herramienta 'control_playback' falló: {failure}."

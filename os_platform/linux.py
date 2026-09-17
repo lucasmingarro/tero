@@ -1,4 +1,11 @@
-"""Platform implementation for Linux."""
+"""Platform implementation for Linux.
+
+The binaries used here: `wpctl` (WirePlumber) for the volume, `playerctl`
+(MPRIS) for playback, `xdg-open` to hand a URI to the desktop,
+`notify-send` for notifications, `nvidia-smi` for the GPU. The key comes
+from `/dev/input` through evdev, and the available RAM from
+`/proc/meminfo`.
+"""
 
 import selectors
 import subprocess
@@ -11,6 +18,11 @@ from os_platform.base import Platform
 
 
 _POINTER_AXES = {ecodes.REL_X, ecodes.REL_Y}
+
+# The default output of the system. The one that always exists (unlike an
+# individual application's stream, which appears and disappears) -- see the
+# note at the top of tools/_ducking.py.
+_SINK = "@DEFAULT_AUDIO_SINK@"
 
 
 def _is_keyboard(device: InputDevice) -> bool:
@@ -93,8 +105,111 @@ class LinuxPlatform(Platform):
         raise NotImplementedError("capture_screen llega en la fase 3 (Contexto)")
 
     def media(self, action: str) -> None:
-        # Phase 2, the control_playback tool. Requires playerctl installed.
-        raise NotImplementedError("media llega en la fase 2 (Cerebro)")
+        result = subprocess.run(
+            ["playerctl", action], capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            # "No player could handle this command": there is no player with
+            # an active MPRIS session, probably because Spotify is not even
+            # open. What the caller does about it (open it and retry) is not
+            # this layer's business.
+            raise RuntimeError(result.stderr.strip() or "sin reproductor activo")
+
+    def pause_player(self, name: str) -> None:
+        # A fixed MPRIS player name, unlike media(): with the YouTube window
+        # also registered as an MPRIS player, an untargeted pause could end
+        # up pausing YouTube instead of the player the caller meant.
+        subprocess.run(["playerctl", "-p", name, "pause"], capture_output=True, check=False)
 
     def notify(self, text: str) -> None:
         subprocess.run(["notify-send", "Tero", text], check=False)
+
+    def master_volume(self) -> float | None:
+        result = subprocess.run(
+            ["wpctl", "get-volume", _SINK], capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            return None
+        for part in result.stdout.split():
+            try:
+                return float(part)
+            except ValueError:
+                continue
+        return None
+
+    def set_master_volume(self, value: float) -> None:
+        subprocess.run(
+            ["wpctl", "set-volume", _SINK, f"{max(0.0, min(1.0, value)):.3f}"],
+            capture_output=True,
+            check=False,
+        )
+
+    def adjust_master_volume(self, delta_percent: int) -> None:
+        sign = "+" if delta_percent >= 0 else "-"
+        subprocess.run(
+            ["wpctl", "set-volume", _SINK, f"{abs(delta_percent)}%{sign}"], check=False
+        )
+
+    def set_mute(self, muted: bool) -> None:
+        subprocess.run(["wpctl", "set-mute", _SINK, "1" if muted else "0"], check=False)
+
+    def open_uri(self, uri: str) -> None:
+        # Whatever gets opened inherits the file descriptors of whoever
+        # opened it: without DEVNULL, Spotify writes its GTK warnings into
+        # logs/tero.log, and with start_new_session it does not hang off the
+        # daemon process.
+        subprocess.Popen(
+            ["xdg-open", uri],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    def available_ram_mb(self) -> float | None:
+        # MemAvailable (not "free"): it is the kernel's estimate of how much
+        # can be requested without starting to swap, which is the number
+        # that matters to health.py.
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) / 1024
+        except Exception:
+            return None
+        return None
+
+    def gpu_status(self) -> dict | None:
+        """Temperature, free VRAM and whether the card is throttling itself.
+
+        `clocks_throttle_reasons.hw_thermal_slowdown` is a better signal than
+        comparing the temperature against a fixed number: it is the card
+        saying "I am at my limit", with this card's real limit, without
+        having to guess a threshold per model.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=temperature.gpu,memory.total,memory.used,"
+                    "clocks_throttle_reasons.hw_thermal_slowdown",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5.0,
+            )
+            if result.returncode != 0:
+                return None
+            temp, total, used, slowdown = (p.strip() for p in result.stdout.split(","))
+            return {
+                "temperature_c": float(temp),
+                "free_vram_mb": float(total) - float(used),
+                "thermal_slowdown": slowdown.lower() == "active",
+            }
+        except Exception:
+            # With no nvidia-smi (a machine without an NVIDIA GPU) there is
+            # nothing to watch here; the RAM watch keeps working anyway.
+            return None
+

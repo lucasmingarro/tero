@@ -41,14 +41,14 @@ on every ramp step to compute the next one (instead of keeping count
 ourselves) stalls as soon as the difference drops below ~0.01 -- which is
 why the real volume is read only once per full cycle (bootstrap) and from
 there on the Ducker itself is the single source of truth for "where the
-volume is now".
+volume is now". Reading and writing the volume goes through the platform
+layer (`Platform.master_volume`/`set_master_volume`).
 """
 
-import subprocess
 import threading
 import time
 
-_SINK = "@DEFAULT_AUDIO_SINK@"
+from os_platform import get_platform
 
 _DUCKED_VOLUME = 0.10
 _STEP_S = 0.02
@@ -59,28 +59,6 @@ _STEP_S = 0.02
 _FADE_DOWN_FACTOR = 0.22
 _FADE_UP_FACTOR = 0.05
 _DONE_THRESHOLD = 0.004
-
-
-def _sink_volume() -> float | None:
-    result = subprocess.run(
-        ["wpctl", "get-volume", _SINK], capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        return None
-    for part in result.stdout.split():
-        try:
-            return float(part)
-        except ValueError:
-            continue
-    return None
-
-
-def _set_sink_volume(value: float) -> None:
-    subprocess.run(
-        ["wpctl", "set-volume", _SINK, f"{max(0.0, min(1.0, value)):.3f}"],
-        capture_output=True,
-        check=False,
-    )
 
 
 class Ducker:
@@ -117,12 +95,13 @@ class Ducker:
             self._thread.start()
 
     def _ramp(self) -> None:
+        platform = get_platform()
         with self._lock:
             current = self._current
         if current is None:
             # Bootstrap: first duck of this cycle -- the only real read of
             # the whole cycle.
-            real = _sink_volume()
+            real = platform.master_volume()
             if real is None:
                 return
             current = real
@@ -137,7 +116,7 @@ class Ducker:
                 return
             if abs(target - current) < _DONE_THRESHOLD:
                 current = target
-                _set_sink_volume(current)
+                platform.set_master_volume(current)
                 with self._lock:
                     self._current = current
                     if current == self._real_volume:
@@ -151,7 +130,7 @@ class Ducker:
                 return
             factor = _FADE_DOWN_FACTOR if target < current else _FADE_UP_FACTOR
             current += (target - current) * factor
-            _set_sink_volume(current)
+            platform.set_master_volume(current)
             with self._lock:
                 self._current = current
             time.sleep(_STEP_S)
