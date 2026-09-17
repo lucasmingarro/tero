@@ -2,8 +2,9 @@
 local model can see and call (JSON tool-calling schema).
 
 Adding a new tool means writing a function with a docstring and type
-hints, decorating it with @tool, and importing the module from
-brain/router.py.
+hints, decorating it with @tool, declaring in the module which platforms it
+supports (`SUPPORTED_PLATFORMS = {"linux", "darwin"}`), and importing the
+module from brain/router.py.
 
 Note on language: identifiers and comments are English, but every string
 that ends up spoken by Tero (or read by the model to decide what to say)
@@ -11,6 +12,7 @@ stays in Spanish -- that includes the error messages built below.
 """
 
 import inspect
+import sys
 import typing
 from typing import Callable
 
@@ -26,8 +28,31 @@ def _param_schema(annotation) -> dict:
     return {"type": _JSON_TYPES.get(annotation, "string")}
 
 
+def _supported_here(func: Callable[..., str]) -> bool:
+    """Whether the module defining `func` says it works on this OS.
+
+    brain/router.py imports every tool module unconditionally (importing is
+    what registers them), so this is the place where a tool that cannot work
+    here is left out of the catalog: the model never sees it, and therefore
+    cannot call something that was going to fail and be read out loud as an
+    error. Not declaring it is an error and not "works everywhere": a new
+    tool has to say where it runs.
+    """
+    module = sys.modules[func.__module__]
+    platforms = getattr(module, "SUPPORTED_PLATFORMS", None)
+    if platforms is None:
+        raise RuntimeError(
+            f"El módulo {func.__module__} no declara SUPPORTED_PLATFORMS "
+            f"(hace falta para registrar {func.__name__}, ver tools/__init__.py)"
+        )
+    return sys.platform in platforms
+
+
 def tool(func: Callable[..., str]) -> Callable[..., str]:
-    """Registers `func` as a tool available to the model."""
+    """Registers `func` as a tool available to the model, if the module it
+    lives in supports this OS (see `_supported_here`)."""
+    if not _supported_here(func):
+        return func
     signature = inspect.signature(func)
     annotations = typing.get_type_hints(func)
     properties = {}

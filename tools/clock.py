@@ -11,6 +11,8 @@ from datetime import datetime
 
 from tools import tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 # Spoken out loud by Tero, so they stay in Spanish.
 _DAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 _MONTHS = [

@@ -39,11 +39,23 @@ import asyncio
 import json as _json
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import httpx
 import websockets
+
+# Chrome on XWayland, moved with wmctrl, identified through /proc: Linux
+# desktop, end to end. tools/youtube.py takes its own SUPPORTED_PLATFORMS
+# from here, and tools/music.py asks `available()` before using the
+# "the user named a known channel" shortcut.
+SUPPORTED_PLATFORMS = {"linux"}
+
+
+def available() -> bool:
+    return sys.platform in SUPPORTED_PLATFORMS
+
 
 PROFILE = Path.home() / ".config" / "tero" / "chrome_youtube"
 

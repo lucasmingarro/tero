@@ -25,6 +25,9 @@ import subprocess
 
 from tools import tool
 
+# It goes through D-Bus into the GNOME extension: GNOME only, so Linux only.
+SUPPORTED_PLATFORMS = {"linux"}
+
 _BUS = "org.gnome.Shell"
 _PATH = "/org/gnome/Shell/Extensions/Tero"
 _IFACE = "org.gnome.Shell.Extensions.Tero"

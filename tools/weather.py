@@ -4,6 +4,8 @@ import httpx
 
 from tools import tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 _GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 

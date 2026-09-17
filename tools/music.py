@@ -17,6 +17,8 @@ import httpx
 from os_platform import get_platform
 from tools import _spotify_auth, _youtube_favorites, _youtube_screen, tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 _API = "https://api.spotify.com/v1"
 
 
@@ -174,9 +176,14 @@ def play_music(query: str) -> str:
     # a known channel, that wins over searching for it as a song -- it
     # avoids "Poné Vorterix" ending up playing whatever Spotify thinks
     # sounds similar instead of opening the actual channel (happened live).
-    channel_result = _youtube_favorites.open_if_known(query)
-    if channel_result is not None:
-        return channel_result
+    # Only where the YouTube window exists: on macOS there is nothing to
+    # open it in yet, and the seeded channels of _youtube_favorites would
+    # send a plain music request down a road that ends in "google-chrome
+    # not found".
+    if _youtube_screen.available():
+        channel_result = _youtube_favorites.open_if_known(query)
+        if channel_result is not None:
+            return channel_result
 
     track = _search_track(query)
     if track is None:

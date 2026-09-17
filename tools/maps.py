@@ -11,6 +11,8 @@ import httpx
 
 from tools import tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 _GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
 

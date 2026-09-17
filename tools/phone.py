@@ -8,6 +8,8 @@ import httpx
 
 from tools import _telegram, tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 _API = "https://api.telegram.org"
 
 

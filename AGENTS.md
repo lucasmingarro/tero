@@ -112,9 +112,15 @@ Until there is:
    reads), **Spanish return string** (Tero says it out loud).
 2. Decorate it with `@tool` from `tools/__init__.py`: the JSON schema is
    built from the signature, and `Literal[...]` becomes an enum.
-3. Add `import tools.<name>  # noqa: F401` to `brain/router.py` —
+3. Declare in the module which platforms it works on:
+   `SUPPORTED_PLATFORMS = {"linux", "darwin"}`, or just `{"linux"}` if it
+   depends on the Linux desktop. It is mandatory — `@tool` raises without
+   it — and it is what keeps the model from being offered a tool that
+   cannot run here (on macOS today: `read_terminal`,
+   `move_window_to_monitor` and the three YouTube ones).
+4. Add `import tools.<name>  # noqa: F401` to `brain/router.py` —
    importing the module is what registers the tool.
-4. Failures: return `"La herramienta 'x' falló: ..."` (or let the
+5. Failures: return `"La herramienta 'x' falló: ..."` (or let the
    exception through: `execute()` wraps it in that same shape).
    `tools.is_error()` keys on that prefix, and the prompt tells the model
    never to invent a failure the tool did not report.

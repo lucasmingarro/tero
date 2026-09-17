@@ -5,6 +5,8 @@ from typing import Literal
 from os_platform import get_platform
 from tools import tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 
 @tool
 def set_volume(action: Literal["up", "down", "mute", "unmute"], percent: int = 10) -> str:

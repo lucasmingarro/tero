@@ -17,6 +17,11 @@ from pathlib import Path
 
 from tools import tool
 
+# AT-SPI and the X/Wayland primary selection: both Linux desktop. The macOS
+# way in is Accessibility (AXUIElement) and there is no primary selection at
+# all -- phase 2.3 of docs/PLAN-MULTIPLATAFORMA.md.
+SUPPORTED_PLATFORMS = {"linux"}
+
 _CHAR_LIMIT = 4000
 _ATSPI_SCRIPT = Path(__file__).parent / "_read_terminal_atspi.py"
 _SYSTEM_PYTHON = "/usr/bin/python3"

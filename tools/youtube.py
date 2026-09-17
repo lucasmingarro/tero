@@ -16,6 +16,12 @@ import httpx
 from tools import _youtube_favorites, _youtube_screen, tool
 from tools.music import pause_spotify
 
+# The whole module: the dedicated window is Chrome on XWayland, moved with
+# wmctrl and inspected through /proc (tools/_youtube_screen.py). Phase 2.2
+# of docs/PLAN-MULTIPLATAFORMA.md turns the player into a configurable
+# backend, and that is what will make this work on macOS.
+SUPPORTED_PLATFORMS = _youtube_screen.SUPPORTED_PLATFORMS
+
 
 def current_state() -> dict | None:
     """For the soul-connector, same as it does with the Spotify song (see

@@ -8,6 +8,8 @@ from typing import Literal
 
 from tools import tool
 
+SUPPORTED_PLATFORMS = {"linux", "darwin"}
+
 
 @tool
 def open_url(url: str) -> str:
