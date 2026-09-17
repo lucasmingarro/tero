@@ -12,6 +12,10 @@ def create_platform(**kwargs) -> Platform:
         from os_platform.linux import LinuxPlatform
 
         return LinuxPlatform(**kwargs)
+    if sys.platform == "darwin":
+        from os_platform.macos import MacOSPlatform
+
+        return MacOSPlatform(**kwargs)
     raise NotImplementedError(f"No hay implementación de Platform para {sys.platform!r} todavía")
 
 

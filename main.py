@@ -59,6 +59,23 @@ from voice.tts import TTS
 
 CONFIG_PATH = Path(__file__).parent / "config.toml"
 
+# sys.platform -> name of the config.toml subsection that overrides the key
+# ("macos" reads better in a file the user edits than "darwin").
+_KEY_SECTIONS = {"darwin": "macos"}
+
+
+def _platform_key_name(key_config: dict) -> str:
+    """Name of the activation key for this OS.
+
+    [key] holds the Linux one (an evdev name); a [key.<os>] subsection
+    overrides it where the name comes from another library and cannot look
+    the same -- pynput's "ctrl_r" against evdev's "KEY_RIGHTCTRL".
+    """
+    section = _KEY_SECTIONS.get(sys.platform)
+    if section is not None:
+        return key_config.get(section, {}).get("name", key_config["name"])
+    return key_config["name"]
+
 
 def _beep(frequency_hz: float, duration_s: float = 0.08) -> None:
     t = np.linspace(0, duration_s, int(44100 * duration_s), endpoint=False)
@@ -124,10 +141,11 @@ class Recorder:
 class Tero:
     def __init__(self, config: dict):
         self._config = config
+        self._key_name = _platform_key_name(config["key"])
         # First call of the process, and the only one that passes the key:
         # from here on the tools and health.py get this same instance with
         # get_platform().
-        self._platform = get_platform(key=config["key"]["name"])
+        self._platform = get_platform(key=self._key_name)
         self._recorder = Recorder(
             config["audio"]["sample_rate_hz"], config["audio"]["channels"],
             on_level=self._soul_connector_level,
@@ -353,7 +371,7 @@ class Tero:
     def run(self) -> None:
         self._platform.listen_key(self.on_down, self.on_up)
         self._health_monitor.start()
-        print(f"Tero escuchando. Mantené {self._config['key']['name']} para hablar.")
+        print(f"Tero escuchando. Mantené {self._key_name} para hablar.")
         try:
             while self._shutdown_reason is None:
                 time.sleep(0.5)

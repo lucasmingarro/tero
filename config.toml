@@ -4,6 +4,14 @@ name = "KEY_RIGHTCTRL"
 # Threshold in seconds: below it is a short tap (toggle), above it is push-to-talk.
 toggle_threshold_s = 0.35
 
+# Per-OS override of the key: the names have nothing in common between
+# platforms, because each one comes from a different library (evdev above,
+# pynput here). Everything else in [key] is shared.
+[key.macos]
+# pynput key name (see: uv run python -c "from pynput.keyboard import Key; print(sorted(k.name for k in Key))")
+# A single character works too, e.g. name = "ñ".
+name = "ctrl_r"
+
 [audio]
 sample_rate_hz = 16000
 channels = 1
