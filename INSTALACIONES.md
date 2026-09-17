@@ -59,8 +59,13 @@ Por las dudas, para no confundir con lo de arriba: `wl-paste`, `xclip` y
 venían con el escritorio GNOME/Wayland de esta máquina — no se instalaron
 para Tero.
 
-Lo mismo con `wpctl` (WirePlumber) y `pw-dump` (PipeWire): vienen con el
-stack de audio del sistema. `wpctl` lo usa `set_volume` sobre el sink
-por defecto, y los dos juntos los usa el ducking de música
-(`tools/_ducking.py`) para bajarle el volumen al stream de Spotify
-sin tocar el sink que usa el TTS para salir.
+Lo mismo con `wpctl` (WirePlumber): viene con el stack de audio del
+sistema. Lo usan `set_volume` y el ducking de música
+(`tools/_ducking.py`), los dos sobre el sink por defecto
+(`@DEFAULT_AUDIO_SINK@`). El ducking baja el maestro **solo mientras la
+tecla está apretada** (la ventana en que el micrófono está abierto) y lo
+devuelve al soltarla: nunca se solapa con la voz de Tero, que sale por
+ese mismo sink. El diseño anterior bajaba el stream de Spotify por
+separado y necesitaba además `pw-dump` para encontrarlo; se descartó el
+2026-09-14 (el motivo está al principio de `tools/_ducking.py`) y
+`pw-dump` ya no se usa.

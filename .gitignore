@@ -7,3 +7,6 @@ voice/models/
 
 # Launcher logs (./tero)
 logs/
+
+# kiro-cli workspace settings
+.kiro/

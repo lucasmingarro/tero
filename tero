@@ -118,7 +118,7 @@ else
 fi
 
 missing=""
-for binary in playerctl wpctl pw-dump wmctrl notify-send; do
+for binary in playerctl wpctl wmctrl notify-send; do
   command -v "$binary" >/dev/null 2>&1 || missing="$missing $binary"
 done
 if [ -n "$missing" ]; then
