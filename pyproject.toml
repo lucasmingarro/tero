@@ -10,13 +10,23 @@ dependencies = [
     "sounddevice>=0.5",
     "numpy>=2.0",
     "faster-whisper>=1.0",
-    "evdev>=1.7",
     "piper-tts>=1.2",
-    "nvidia-cublas-cu12>=12.9.2.10",
-    "nvidia-cudnn-cu12>=9.26.0.51",
     "ollama>=0.6.2",
     "httpx>=0.28.1",
     "websockets>=17.1",
+    "psutil>=7.0",
+    # Linux only: the global key comes from /dev/input via evdev, Whisper
+    # runs on CUDA, and the soul-connector needs the Qt backend of
+    # pywebview (QT_QPA_PLATFORM=xcb, see README).
+    "evdev>=1.7 ; sys_platform == 'linux'",
+    "nvidia-cublas-cu12>=12.9.2.10 ; sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9.26.0.51 ; sys_platform == 'linux'",
+    "pywebview[qt]>=6.2.1 ; sys_platform == 'linux'",
+    # macOS only: the global key comes from pynput (needs the Input
+    # Monitoring permission), and pywebview uses the native Cocoa backend,
+    # so no Qt extra.
+    "pynput>=1.7 ; sys_platform == 'darwin'",
+    "pywebview>=6.2.1 ; sys_platform == 'darwin'",
 ]
 
 [tool.uv]

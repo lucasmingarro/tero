@@ -4,11 +4,20 @@ Asistente de voz de escritorio, activado por tecla. Corre como daemon en
 segundo plano; el micrófono se abre solo mientras se mantiene apretada una
 tecla dedicada.
 
-Desarrollo en **Linux** (GNOME/Wayland) — el proyecto arrancó directo acá,
-no hubo migración desde Windows pese a que secciones viejas de este
-documento lo daban por planificado (ver `plataforma/linux.py`, ya escrito
-y en uso; no existe `plataforma/windows.py`).
-Idioma del asistente y del código: **español**.
+Hoy corre **solo en Linux** (GNOME/Wayland): es donde arrancó el proyecto
+y el único sistema con capa de plataforma escrita (`os_platform/linux.py`,
+en uso). **macOS está planificado**, con el diagnóstico y las fases en
+`docs/PLAN-MULTIPLATAFORMA.md` — todavía no arrancado:
+`create_platform()` tira `NotImplementedError` en cualquier sistema que no
+sea Linux. Windows quedó como tabla de diseño original y nunca se
+implementó (no existe `os_platform/windows.py`).
+
+Idioma del asistente: **español** (rioplatense). Idioma del código:
+**inglés** — identificadores, comentarios, docstrings y nombres de
+archivo. Siguen en castellano, a propósito, los textos que Tero dice en
+voz alta (los `return` de las herramientas), los mensajes de log y de
+error, y el prompt del sistema (`brain/prompt.py`): son lo que define cómo
+habla.
 
 ---
 
@@ -43,14 +52,14 @@ audio abierta consumiendo cuota. La tecla marca inicio y fin.
   o `Super+Espacio`.
 - **Barge-in**: si se aprieta la tecla mientras Tero está hablando, corta
   el audio al toque y arranca a grabar de una, sin esperar a que termine
-  la frase (`main.py`, `on_down`/`voz/tts.py`). Apretarla mientras todavía
+  la frase (`main.py`, `on_down`/`voice/tts.py`). Apretarla mientras todavía
   está transcribiendo/pensando (nada sonando todavía) se ignora a
   propósito, para no tener dos turnos procesándose en paralelo.
 
 ### Cerebro: modelo local + Codex como herramienta
 
 **No hay un clasificador que decida entre local y nube.** El modelo local
-ve el catálogo de herramientas, y una de ellas es `delegar_a_codex`. El
+ve el catálogo de herramientas, y una de ellas es `delegate_to_codex`. El
 ruteo sale gratis del tool calling.
 
 Regla dura: **Codex nunca contesta preguntas, solo hace trabajo sobre
@@ -63,9 +72,8 @@ El usuario paga ChatGPT Plus (20 USD/mes). **La suscripción no incluye
 acceso a la API.** No hay presupuesto para API key de OpenAI.
 
 La única vía oficial de usar la suscripción desde código es **Codex CLI
-con login de ChatGPT** (`codex login`, después `codex "prompt"` en modo
-interactivo — Tero usa este modo, no `codex exec`, ver `delegar_a_codex`).
-Está documentado por OpenAI.
+con login de ChatGPT** (`codex login`, después `codex exec` en modo no
+interactivo). Está documentado por OpenAI.
 
 Descartado explícitamente:
 
@@ -95,16 +103,22 @@ necesidad.
 
 ## Stack
 
-| Pieza | Elección | Windows (nunca implementado) | Linux (real) |
+| Pieza | Elección | Linux (real) | macOS (planificado) |
 |---|---|---|---|
 | Audio in/out | `sounddevice` | igual | igual |
-| STT | Groq (Whisper `large-v3` online) con `faster-whisper` local de respaldo, ver más abajo | igual | igual |
+| STT | Groq (Whisper `large-v3` online) con `faster-whisper` local de respaldo, ver más abajo | igual | Groq igual; el respaldo local corre solo en CPU (CTranslate2), habría que bajar el modelo por defecto |
 | Modelo local | Qwen3 4B Instruct vía Ollama | igual | igual |
 | TTS | Piper (ONNX, voz es) | igual | igual |
-| Tecla global | — | `pynput` | `evdev` |
-| Ventana activa | — | `pygetwindow` / Win32 | `wmctrl` / D-Bus |
-| Media | — | teclas multimedia | MPRIS (`playerctl`) + Web API de Spotify |
-| Overlay | pywebview (Qt) + WebSocket — deprecado 2026-09-16, ver "El soul-connector" | — | Extensión de GNOME Shell (`soul-connector-gnome/`), única implementación activa |
+| Tecla global | — | `evdev` sobre `/dev/input` (grupo `input`) | `pynput` (pide permiso de Input Monitoring) |
+| Volumen y ducking | — | `wpctl` sobre `@DEFAULT_AUDIO_SINK@` | `osascript set volume output volume` (CoreAudio vía pyobjc si la rampa queda lenta) |
+| Media | — | MPRIS (`playerctl`) + Web API de Spotify | Web API de Spotify (camino común) + AppleScript de respaldo |
+| Ventana activa | — | `wmctrl` / D-Bus a la extensión de GNOME | Accessibility (`AXUIElement` vía pyobjc); baja prioridad |
+| Overlay | pywebview + WebSocket | Qt con `QT_QPA_PLATFORM=xcb` (sin `gtk4-layer-shell`, no instalado), o la extensión de GNOME | backend Cocoa, sin Qt ni `wmctrl`; la extensión de GNOME no se porta |
+| Audio del sistema (overlay) | monitor del sink | PipeWire `.monitor` | no hay loopback nativo: se apaga (BlackHole opcional) |
+| Salud del equipo | — | `/proc/meminfo` + `nvidia-smi` | `psutil`; sin GPU que vigilar |
+| Notificaciones | — | `notify-send` | `osascript display notification` |
+| Servicio | — | systemd user ✅ (`systemd/tero.service`, ver más abajo) | `launchd` (`~/Library/LaunchAgents/local.tero.plist`) |
+| Launcher | — | `./tero` en bash (`flock`, `pgrep`, `gnome-extensions`) | reescritura en Python, la misma para los dos |
 
 ### STT: Groq online, Whisper local de respaldo
 
@@ -125,7 +139,7 @@ del servidor) -- nunca al arrancar. Al fallar, Tero avisa por voz
 ("Pasando a modo offline, esperá que cargo Whisper") y sigue con el mismo
 audio, sin pedir que se repita el pedido. Cuando Groq vuelve a responder,
 suelta la referencia al modelo local (libera la VRAM) y avisa "Volví a
-modo online". Implementado en `voz/stt.py` (`STTHibrido`). Sin key de
+modo online". Implementado en `voice/stt.py` (`HybridSTT`). Sin key de
 Groq, el comportamiento es el de siempre: 100% local, cargado al
 arrancar.
 
@@ -135,14 +149,14 @@ pantalla ni la terminal, ver más abajo). Se activó Zero Data Retention en
 la cuenta para que no la retengan. Decisión del usuario, sabiendo esto —
 lo que le importa proteger es la comprensión de frases libres, no el
 conocimiento general del modelo (ver charla del 2026-09-13).
-| Servicio | — | Task Scheduler | systemd user ✅ (`systemd/tero.service`, ver más abajo) |
 
 `modelo small` se probó primero pero alucinaba nombres propios (Trelew,
 artistas); se subió a `large-v3` a pedido explícito del usuario
 ("prefiero un modelo un poco más lento pero que funcione").
 
-La fila de Windows es la tabla de diseño original — nunca se llegó a
-escribir `plataforma/windows.py`, el desarrollo fue siempre en Linux.
+La columna de macOS es plan, no código: el detalle de qué está atado a
+Linux hoy y en qué orden se piensa desatarlo está en
+`docs/PLAN-MULTIPLATAFORMA.md`.
 
 ---
 
@@ -151,54 +165,57 @@ escribir `plataforma/windows.py`, el desarrollo fue siempre en Linux.
 ```
 tero/
   main.py            bucle principal
-  plataforma/        base.py, linux.py (no hay windows.py, ver más arriba)
-  voz/               stt.py, tts.py
-  cerebro/           router.py, prompt.py
-  herramientas/      musica.py, clima.py, web.py, mapas.py, celular.py,
-                     terminal.py, tiempo.py, volumen.py, youtube.py,
-                     mover_ventana_monitor.py, captura_pantalla.py,
-                     _spotify_auth.py, _telegram.py, _ducking.py,
-                     _pantalla_youtube.py, _gnome_dbus.py, codex.py
-  soul_connector/    server.py, audio_sistema.py -- infraestructura
-                     compartida (WebSocket + audio de sistema), no overlay;
-                     el overlay en sí (pywebview) se deprecó, ver "El
-                     soul-connector"
-  soul-connector-gnome/  extension.js (solo visual), onda.js, barra.js,
-                     particulas.js, mover.js, enlace.js, panel.js --
-                     overlay activo, extensión de GNOME Shell
-                     puente.js: D-Bus hacia adentro del compositor, todo
-                     lo no-visual, separado a propósito — ver Reglas de
-                     arquitectura
+  health.py          vigilancia de RAM/VRAM/temperatura
+  os_platform/       base.py, linux.py (no hay windows.py, ver más arriba)
+  voice/             stt.py, tts.py
+  brain/             router.py, prompt.py
+  tools/             music.py, weather.py, web.py, maps.py, phone.py,
+                     terminal.py, clock.py, volume.py, youtube.py,
+                     move_window.py, _spotify_auth.py, _telegram.py,
+                     _ducking.py, _youtube_screen.py,
+                     _youtube_favorites.py, _read_terminal_atspi.py,
+                     codex.py (fase 4)
+  soul_connector/    server.py, window.py, system_audio.py, index.html,
+                     siriwave.umd.js (vendorizada)
+  soul-connector-gnome/  extension.js, wave.js, bar.js, move.js, link.js,
+                     particles.js, panel.js
+                     (misma onda, como extensión de GNOME Shell)
   config.toml
 ```
 
-### Capa de plataforma (clave para la migración, si algún día pasa)
+### Capa de plataforma (en expansión)
 
-Interfaz mínima: solo lo que de verdad no tiene otra forma de resolverse
-sin saber en qué sistema corre.
+La interfaz existe (`os_platform/base.py`, cinco métodos) pero está casi
+vacía: de los cinco, **solo `listen_key` y `notify` están implementados**
+(`active_window`, `capture_screen` y `media` tiran `NotImplementedError`).
+Y la mayor parte del acoplamiento a Linux vive **fuera** de
+`os_platform/`: `wpctl` en `tools/_ducking.py` y `tools/volume.py`,
+`playerctl` y `xdg-open` en `tools/music.py`, AT-SPI en
+`tools/terminal.py`, `wmctrl` y `/proc` en `tools/_youtube_screen.py`,
+`/proc/meminfo` y `nvidia-smi` en `health.py`, el monitor de PipeWire en
+`soul_connector/system_audio.py`, y `flock`/`pgrep`/`gnome-extensions` en
+el launcher `tero`. O sea: no es cierto que portar sea escribir un archivo
+de ~150 líneas — primero hay que mover ese acoplamiento adentro de la
+interfaz, y ahí sí cada OS es un archivo.
+
+Ese es justamente el plan de `docs/PLAN-MULTIPLATAFORMA.md`: `Platform`
+crece a ~10 métodos (volumen maestro, media, `open_app`, `read_terminal`,
+RAM/GPU, lanzar el browser), las tools dejan de llamar `subprocess`
+directo, y lo que un OS no soporte devuelve "no anda en esta máquina" en
+vez de fallar.
 
 ```python
-# plataforma/base.py
-class Plataforma:
-    def escuchar_tecla(self, on_down, on_up): ...
-    def notificar(self, texto: str):          ...
+# os_platform/base.py (interfaz de hoy)
+class Platform:
+    def listen_key(self, on_down, on_up): ...   # implementado en linux.py
+    def active_window(self) -> dict:      ...   # NotImplementedError
+    def capture_screen(self) -> bytes:    ...   # NotImplementedError (fase 3)
+    def media(self, action: str):         ...   # NotImplementedError
+    def notify(self, text: str):          ...   # implementado en linux.py
 ```
 
 El audio **no** entra en esta abstracción: `sounddevice` ya es
 multiplataforma.
-
-Originalmente tenía cinco métodos (`ventana_activa`, `capturar_pantalla`,
-`media` también) pero, con el proyecto siempre en Linux (nunca hubo
-`windows.py` que justificara pasar todo por acá), ninguno de esos tres
-llegó a tener un caller real — cada herramienta que necesitaba algo así
-terminó llamando directo a su API real de Linux (`leer_terminal` usa
-AT-SPI propio, `control_media` llama `playerctl` directo,
-`capturar_pantalla` usa D-Bus a la extensión de GNOME). Se sacaron de la
-interfaz el 2026-09-16 (hallazgo de la auditoría de ese día, decisión
-explícita del usuario: "sacarlos, no dejarlos como fósiles"). Si el día
-de mañana aparece un motivo real para portar a otro SO, se agregan de
-nuevo con el uso real en mente — ver Reglas de arquitectura, "sin
-abstracciones antes de tiempo".
 
 ### Herramientas
 
@@ -207,18 +224,21 @@ el esquema JSON que consume Ollama. Agregar una capacidad = un archivo de
 ~20 líneas, sin tocar el núcleo.
 
 ```python
-herramientas = [
-  reproducir_musica, reproducir_musica_aleatoria, control_media,
-  consultar_clima, abrir_url, buscar_en_sitio, ajustar_volumen,
-  leer_terminal, consultar_hora, calcular_viaje, mandar_al_celular,
-  reproducir_canal_youtube, abrir_youtube_general, sugerir_canales_youtube,
-  capturar_pantalla, delegar_a_codex          # salida de escape
+tools = [
+  play_music, play_random_music, control_playback,
+  get_weather, open_url, search_site, set_volume,
+  read_terminal, get_time, get_trip, send_to_phone,
+  play_youtube_channel, open_youtube, suggest_youtube_channels,
+  move_window_to_monitor,
+  capture_screen, delegate_to_codex          # salida de escape
 ]
 ```
 
-Catálogo completo ✅. `consultar_hora` no estaba en el plan original: se agregó porque el modelo
+Catálogo completo ✅ salvo `capture_screen` (fase 3, atado a
+`Platform.capture_screen`) y `delegate_to_codex` (fase 4).
+`get_time` no estaba en el plan original: se agregó porque el modelo
 local no tiene noción de reloj y "qué hora es"/"qué día es hoy" lo
-necesitan. `calcular_viaje` y `mandar_al_celular` tampoco estaban en el
+necesitan. `get_trip` y `send_to_phone` tampoco estaban en el
 plan original, surgieron de pedidos concretos del usuario (distancia a un
 lugar + mandarle la dirección al celular).
 
@@ -227,63 +247,65 @@ Notas por herramienta:
 - **Clima**: Open-Meteo. Sin clave, sin registro. Leer forecast horario y
   dejar que el modelo lo resuma en lenguaje natural.
 - **Música**: reproducción real vía la Web API de Spotify (OAuth PKCE, ver
-  `herramientas/_spotify_auth.py`), no solo abrir una búsqueda — necesario
+  `tools/_spotify_auth.py`), no solo abrir una búsqueda — necesario
   para que "poné X" realmente empiece a sonar X, y para que "siguiente"
-  tenga una cola de verdad detrás. `reproducir_musica` busca y encola el
-  resultado más varios favoritos al azar detrás; `reproducir_musica_
-  aleatoria` es para pedidos genéricos ("poné música") y elige de "Tus me
+  tenga una cola de verdad detrás. `play_music` busca y encola el
+  resultado más varios favoritos al azar detrás; `play_random_music`
+  es para pedidos genéricos ("poné música") y elige de "Tus me
   gusta" (scope `user-library-read`) en vez de repetir siempre lo mismo.
-  `control_media` usa `playerctl` (MPRIS) para play/pausa/siguiente/
+  `control_playback` usa `playerctl` (MPRIS) para play/pausa/siguiente/
   anterior sobre lo que ya esté sonando (Spotify, navegador, etc.) —
   requiere tenerlo instalado, no viene por defecto. Requiere Spotify
   Premium (la Web API no deja reproducir en cuentas free).
   **Música y YouTube se pausan mutuamente**: arrancar algo en
-  `reproducir_musica`/`reproducir_musica_aleatoria` pausa la ventana de
+  `play_music`/`play_random_music` pausa la ventana de
   YouTube (Chrome expone cada ventana con media como reproductor MPRIS
-  aparte, `chromium.instance<PID>` — ver `_pantalla_youtube.pausar()`),
-  y `reproducir_canal_youtube` pausa Spotify puntualmente
-  (`musica.pausar_spotify()`, apuntado a `-p spotify` a propósito, para
+  aparte, `chromium.instance<PID>` — ver `_youtube_screen.pause()`),
+  y `play_youtube_channel` pausa Spotify puntualmente
+  (`music.pause_spotify()`, apuntado a `-p spotify` a propósito, para
   no confundirse con el reproductor de la propia ventana de YouTube).
-  **Ducking** (`herramientas/_ducking.py`, no es una herramienta del
-  modelo): mientras Tero escucha/piensa/habla, **todo lo que esté
-  sonando en el sistema** baja al 10% — progresivo, no de golpe, regla
-  global desde el 2026-09-14 (no una lista de apps conocidas: empezó
-  siendo solo Spotify, después se sumó a mano la ventana de YouTube, y
-  terminó siendo "cualquier audio" a pedido explícito del usuario) — y
-  vuelve solo al volumen real al terminar (no entre "pensando" y
-  "hablando": si hay que hablar, se queda abajo hasta el final para no
-  pegar un salto para arriba y otro para abajo antes de contestar). Se
-  identifica cada stream activo (`state=="running"`) vía `pw-dump`,
-  salvo el del propio proceso de Tero (TTS/beeps, por PID) para no
-  duckearse a sí mismo. `Ducker` guarda a qué **PIDs** corresponde su
-  estimación de volumen (no a qué ids de nodo de PipeWire, que pueden
-  cambiar aunque sea la misma ventana — confirmado en vivo navegando por
-  CDP) y fuerza releerlo si los PIDs activos cambiaron desde la última
-  vez — sin esto, arrastraba el volumen duckeado viejo sobre un stream
-  nuevo que en realidad arrancaba en su volumen real, dejándolo pegado
-  bajo (bug real, visto dos veces con cambios de canal de YouTube a
-  mitad de conversación). Dos vías descartadas en el camino para mover el
-  volumen: `playerctl volume` no sirve porque el cliente de Spotify para
-  Linux no implementa `SetVolume` vía MPRIS (éxito reportado, cero
-  efecto real); la Web API de Spotify (`/me/player/volume`) sí cambia el
-  volumen pero `/me/player/devices` tarda 1-3s en reflejarlo (eventual
-  consistency), demasiado lento para una rampa. Lo que funciona: el
-  propio volumen de cada stream de salida en PipeWire (`wpctl status` →
-  "Streams", node id propio, no el sink del sistema) — instantáneo y no
-  toca el sink que usa el TTS para salir.
-- **Mapas**: `calcular_viaje` geocodifica con Open-Meteo (misma API que el
+  **Ducking** (`tools/_ducking.py`, no es una herramienta del
+  modelo): mientras **la tecla está apretada** (de `on_down` a `on_up`,
+  o sea exactamente la ventana en que el micrófono está grabando), el
+  **volumen maestro** (`@DEFAULT_AUDIO_SINK@` vía `wpctl`) baja al 10% y
+  al soltar vuelve al volumen real, releído del sistema. La rampa es
+  progresiva y asimétrica (baja rápido para tapar lo que esté sonando
+  antes de que el mic termine de abrir, sube despacio para que el
+  retorno no se note), interpolada en un hilo aparte que nunca bloquea
+  al que llama. No se duckea durante "pensando" ni "hablando": ahí ya no
+  hay grabación que proteger, y la voz de Tero sale por ese mismo sink
+  — como el ducking dura solo lo que dura el apretón, nunca se solapa
+  con algo que Tero necesite que se escuche. `wpctl get-volume` redondea
+  a 2 decimales, así que el volumen real se lee **una vez por ciclo**
+  (bootstrap) y de ahí en más el `Ducker` es la única fuente de verdad
+  de "dónde está el volumen ahora"; releerlo en cada paso trababa la
+  rampa apenas la diferencia bajaba de ~0,01.
+  Diseño anterior, descartado el 2026-09-14: duckear **cada stream de
+  aplicación por separado**, identificándolo por PID en PipeWire. Se
+  cayó porque averiguar "qué stream de PipeWire es esta app ahora mismo"
+  es estructuralmente frágil (Spotify en Snap no lleva su PID en el nodo
+  que suena; Chrome cambia el id del stream al navegar por CDP y dejó el
+  volumen pegado en el 10% más de una vez) — el detalle largo, con cada
+  bug que llevó al rediseño, está en el docstring de `_ducking.py`.
+  Dos vías descartadas antes, para mover el volumen: `playerctl volume`
+  no sirve porque el cliente de Spotify para Linux no implementa
+  `SetVolume` vía MPRIS (éxito reportado, cero efecto real); la Web API
+  de Spotify (`/me/player/volume`) sí cambia el volumen pero
+  `/me/player/devices` tarda 1-3s en reflejarlo (eventual consistency),
+  demasiado lento para una rampa.
+- **Mapas**: `get_trip` geocodifica con Open-Meteo (misma API que el
   clima, sin clave) y calcula distancia/tiempo real con el servidor demo
   de OSRM (gratis, sin clave), devolviendo también la URL real de Google
   Maps para la ruta.
-- **Celular**: `mandar_al_celular` manda texto/links al celular del
-  usuario vía un bot de Telegram personal (`herramientas/_telegram.py`) —
+- **Celular**: `send_to_phone` manda texto/links al celular del
+  usuario vía un bot de Telegram personal (`tools/_telegram.py`) —
   se eligió sobre GSConnect/Google Chat por simplicidad de setup.
-- **YouTube**: `reproducir_canal_youtube` abre en vivo el canal que el
-  usuario nombre — **texto libre, no una lista fija** (`herramientas/
+- **YouTube**: `play_youtube_channel` abre en vivo el canal que el
+  usuario nombre — **texto libre, no una lista fija** (`tools/
   youtube.py`). Empezó como un `Literal[...]` de siete canales
   hardcodeados y el usuario lo marcó como un antipatrón con razón: una
   lista cerrada no generaliza, ni el modelo puede llamar la herramienta
-  con algo fuera del enum. Ahora `herramientas/_youtube_favoritos.py`
+  con algo fuera del enum. Ahora `tools/_youtube_favorites.py`
   resuelve por aprendizaje: primero busca por parecido fonético
   (`difflib`) entre los canales ya conocidos (arranca con siete
   sembrados a mano, crece con el uso) — sin red, así "Bortegui" sigue
@@ -291,16 +313,16 @@ Notas por herramienta:
   mejor cuantas más veces se pida; si no hay nada parecido, busca en
   vivo en YouTube (scraping de resultados filtrados a canales, sin API
   key) y lo aprende para la próxima. Persistido en
-  `~/.config/tero/youtube_canales.json`. Arranca solo con sonido gracias a
+  `~/.config/tero/youtube_channels.json`. Arranca solo con sonido gracias a
   `--autoplay-policy=no-user-gesture-required` (sin esto, Chrome bloquea
   el autoplay con sonido en un perfil sin historial de interacción, que
-  es siempre el caso de este perfil dedicado). Sin canal nombrado, `abrir_youtube_general` abre la home y
+  es siempre el caso de este perfil dedicado). Sin canal nombrado, `open_youtube` abre la home y
   pregunta específico vs. novedades (única excepción a "nunca preguntar",
-  ver `cerebro/prompt.py`); `sugerir_canales_youtube` responde esa
+  ver `brain/prompt.py`); `suggest_youtube_channels` responde esa
   pregunta chequeando en vivo (`/live` de cada canal) y, de respaldo, el
   feed RSS por si subieron algo sin estar en vivo. Se abre siempre en una
   ventana de Chrome dedicada, fija en un monitor del escritorio del
-  usuario (`herramientas/_pantalla_youtube.py`) — necesita forzar
+  usuario (`tools/_youtube_screen.py`) — necesita forzar
   `--ozone-platform=x11` porque el Chrome nativo de Wayland no deja
   posicionar la ventana por código (ver detalle en `BITACORA.html`,
   2026-09-14). Un cambio de canal **navega la misma pestaña por CDP**
@@ -313,11 +335,11 @@ Notas por herramienta:
   arma la URL y se abre. Es instantáneo y no se rompe:
   `listado.mercadolibre.com.ar/zapatillas-adidas-talle-44`
   El agente con Playwright se reserva solo para lo que no se puede
-  parametrizar por URL. `buscar_en_sitio` generaliza esto a mercadolibre/
+  parametrizar por URL. `search_site` generaliza esto a mercadolibre/
   google/youtube/amazon/maps.
 - **Terminal**: sin tmux a propósito (el usuario no quiere cambiar cómo
   labura por esto). Se lee por **AT-SPI** (accesibilidad de escritorio,
-  `herramientas/_leer_terminal_atspi.py`, corrido con el Python del
+  `tools/_read_terminal_atspi.py`, corrido con el Python del
   sistema por subprocess porque PyGObject no está en el venv) si la
   ventana activa en ese instante expone un nodo de rol "terminal" — el
   caso de las terminales nativas de GTK/Qt (`ptyxis`, GNOME Terminal,
@@ -329,233 +351,83 @@ Notas por herramienta:
   propósito **no** se revisa el portapapeles de Ctrl+C: el usuario puede
   tener algo copiado ahí para otra cosa y no quiere que Tero se lo lleve
   puesto.
-- **Captura de pantalla** (`herramientas/captura_pantalla.py`, fase 3 ✅):
-  el D-Bus público `org.gnome.Shell.Screenshot` tira `AccessDenied:
-  Screenshot is not allowed` a cualquier llamador externo (GNOME reciente
-  lo reserva para el portal) — mismo problema de fondo que mover una
-  ventana Wayland nativa desde afuera. Se resuelve igual: un método D-Bus
-  propio (`CapturarPantalla`, en `soul-connector-gnome/puente.js`, ver
-  Reglas de arquitectura) que usa `Shell.Screenshot` desde **adentro**
-  del compositor, sin pasar por esa restricción. Guarda un PNG en `/tmp` y
-  devuelve la ruta — no pasa por `plataforma/` (esa capa quedó reducida a
-  solo lo que de verdad no tiene otra forma de resolverse, ver "Capa de
-  plataforma": todo lo Linux-específico de `herramientas/` llama directo
-  a su API real). El
-  modelo local es texto puro, no interpreta la imagen — eso es trabajo de
-  `delegar_a_codex` (fase 4), pasándole la ruta con el flag `-i` de
-  `codex exec` (sube la imagen por la sesión de ChatGPT Plus ya logueada,
-  sin API key, sin exponerla por URL — ver Restricción de presupuesto).
 
-### `delegar_a_codex` ✅ (fase 4, 2026-09-16)
+### `delegate_to_codex`
 
 ```python
-def delegar_a_codex(tarea: str) -> str:
-    """Tareas sobre código o archivos de un proyecto real."""
+def delegate_to_codex(task: str, directory: str) -> str:
+    """Tareas sobre código o archivos del proyecto."""
 ```
 
-**No es un `codex exec` autónomo en background que le lee el resultado al
-usuario por voz** — ese era el diseño original de este documento, y se
-abandonó antes de escribir código porque no había forma decente de
-resolver la confirmación (Codex modifica archivos, y no hay pantalla en
-el flujo de voz para mostrar un diff antes de aprobar). El diseño real es
-un **hand-off**, pedido explícito del usuario: Tero abre la puerta, el
-usuario sigue del otro lado, mirando.
+Invoca `codex exec` en modo no interactivo, con `cwd` en el proyecto,
+timeout generoso, salida capturada. Tres cuidados:
 
-`delegar_a_codex` (`herramientas/codex.py`) hace dos cosas y devuelve el
-control al toque, sin esperar nada:
-
-1. `code <directorio>` — abre VS Code en el proyecto (con la extensión de
-   Codex ya instalada ahí, si se la quiere usar además).
-2. Abre una terminal **Ptyxis** en `directorio`, corriendo
-   `codex "<tarea>"` — la CLI oficial, en modo interactivo, con el pedido
-   ya cargado como primer mensaje. Investigado en vivo antes de
-   implementar: el panel lateral de la extensión de VS Code (`openai.chatgpt`)
-   no se puede precargar con un prompt desde afuera, solo sirve para
-   tipear a mano; la CLI (`codex "prompt"`, distinto de `codex exec`) sí
-   acepta un prompt inicial como argumento y arranca la TUI interactiva
-   con eso ya cargado.
-
-De ahí en más, el usuario sigue solo — mira y aprueba cada cambio con sus
-propios ojos dentro de la sesión de Codex (que tiene su propio control de
-aprobación, `--ask-for-approval`). **Esto resuelve la confirmación sin
-necesidad de diseñar una:** nunca hay edición autónoma sin que el usuario
-la esté mirando, así que no hace falta chequear que el repo esté git
-limpio ni pedir confirmación hablada — los "tres cuidados" originales de
-este documento quedan obsoletos, ya no aplican.
-
-**`directorio` no lo dice el usuario en voz ni lo arma el modelo** —
-pedirle a un modelo de 4B que arme una ruta de archivo a partir de una
-transcripción es frágil, mismo motivo de fondo por el que otras
-herramientas de este proyecto resuelven cosas en código en vez de pedirle
-un paso de razonamiento extra al modelo (ver Reglas de arquitectura). Se
-infiere del contexto: la terminal activa. Investigado en vivo antes de
-implementar (con el objetivo original de leer el cwd por AT-SPI/D-Bus,
-sin tocar nada del sistema):
-
-- **Ptyxis** corre como un único proceso (`--gapplication-service`) para
-  todas las ventanas; el PID que da AT-SPI de la app activa apunta a ese
-  proceso compartido, no a la pestaña puntual, y cada pestaña abierta
-  tiene su propio `bash` hijo sin forma de saber desde afuera cuál
-  corresponde a la que tiene foco. El título de la ventana tampoco trae
-  un path (Ptyxis le pone el nombre del proceso en primer plano). Por
-  D-Bus (`org.gnome.Ptyxis`) solo expone la superficie genérica de
-  GApplication, nada de pestañas ni cwd.
-- **Warp** tampoco: su `/status` es un panel para humanos dentro de la
-  propia app, sin CLI/API externa para consultarlo.
-- Conclusión: ninguno de los dos expone esto desde afuera. **Solución: un
-  hook de shell**, terminal-agnóstico (funciona igual en cualquiera) —
-  `~/.bashrc` escribe el directorio actual a
-  `~/.cache/tero/cwd_actual` en cada prompt (`PROMPT_COMMAND`), mismo
-  patrón que usan iTerm2/VS Code/direnv para lo mismo. Ver
-  INSTALACIONES.md para el detalle y cómo revertirlo.
-
-**Trampa encontrada en vivo:** `ptyxis -- codex "tarea"` fallaba con
-`Failed to find executable codex: No such file or directory` — Ptyxis
-ejecuta el comando directo, sin pasar por `.bashrc`, y en esta máquina
-`codex` lo agrega al PATH `nvm` (que se carga desde `.bashrc`). Fix:
-correrlo como `bash -ic 'codex "tarea"'` — el `-i` fuerza que bash cargue
-`.bashrc` igual que lo haría una pestaña común de Ptyxis abierta a mano.
-
-**Criterio de ruteo** (`cerebro/prompt.py`): sin clasificador aparte, sale
-del tool calling normal — el modelo local usa `delegar_a_codex` para
-pedidos sobre archivos/código de un proyecto real (un error de la
-consola, un bug, "explicame este archivo"), nunca para preguntas
-generales de programación que no dependan de un proyecto puntual
-("¿qué es un closure?") — esas las contesta él mismo, directo.
-
-**Estado visual "codex"** (cian + partículas, ver soul-connector-gnome/
-extension.js) ya estaba implementado desde el 2026-09-14 pero sin nada
-que lo disparara -- `Cerebro` acepta un callback opcional
-`on_delegar_codex`, invocado justo cuando `delegar_a_codex` se ejecuta sin
-error (`cerebro/router.py`, dentro del loop de tool calls). `main.py` lo
-conecta a `_codex_activado()`, que pone el estado en "codex". No hace
-falta revertirlo a mano: como la herramienta es casi instantánea, el
-flash dura solo hasta que `_procesar()` pasa a "hablando" para decir
-"listo".
-
-### Atajo Ctrl+Shift: hand-off directo a ChatGPT (2026-09-16)
-
-Retomando la investigación pospuesta sobre generar imágenes por voz (ver
-memoria del agente, "investigación ChatGPT imágenes"): el usuario pidió
-un atajo global que abra ChatGPT directo, sin pasar por Tero para nada.
-**No es una herramienta del catálogo** -- no pasa por `cerebro/router.py`,
-ni por tool calling, ni por ninguna regla de cuándo usar Codex: es un
-hand-off puro a nivel plataforma, exactamente como `delegar_a_codex` pero
-sin ni siquiera la mediación de una transcripción. El usuario le habla a
-ChatGPT con el modo de voz propio de esa web.
-
-- `Plataforma.escuchar_tecla` (`plataforma/base.py`/`linux.py`) ahora
-  acepta un tercer callback opcional, `on_atajo_chatgpt`, disparado una
-  sola vez por combinación cuando se detectan Ctrl+Shift juntas (acorde,
-  no una tecla puntual) -- reusa el mismo loop/selector que ya lee todos
-  los teclados para el push-to-talk, sin abrir un segundo listener.
-- **Solo Ctrl DERECHO**, nunca el izquierdo -- decisión explícita del
-  usuario tras pensarlo en vivo: el izquierdo se usa todo el tiempo en
-  shortcuts de otras apps (Ctrl+Shift+T, +N, +Esc...) y sumarlo dispararía
-  el atajo por accidente en medio del uso normal de la compu. El derecho
-  no lo usa nada más -- mismo motivo por el que ya es la tecla de
-  push-to-talk. Efecto secundario aceptado y verificado en vivo: un toque
-  de Ctrl+Shift con la mano derecha también hace sonar los dos beeps de
-  push-to-talk (mismo evdev, no exclusivo, dos listeners lo ven igual) --
-  inofensivo, la grabación de menos de 0,2s que resulta se descarta sola.
-- `main.py._abrir_chatgpt()`: `webbrowser.open("https://chatgpt.com")` +
-  un flash del estado "codex" de ~1,5s (`_flash_codex_temporal`, hilo
-  aparte -- a diferencia de `_codex_activado`, acá no hay ningún turno de
-  voz en curso que lo revierta solo, así que se revierte a mano, y solo
-  si nada más cambió el estado mientras tanto).
-- **Depurado en vivo con el usuario probando en tiempo real**: la
-  detección funcionaba desde el primer intento, pero las primeras pruebas
-  fallaron porque el usuario apretaba Ctrl **derecho** (su costumbre, es
-  push-to-talk) mientras el código en ese momento solo escuchaba el
-  izquierdo. Un script de diagnóstico (loguear cada evento de tecla crudo,
-  sin lógica de acorde) confirmó que el teclado mandaba los eventos bien
-  y que el problema era de qué tecla física se estaba probando, no del
-  código -- ahí se destapó la razón real por la que el usuario quiere el
-  derecho (el menos usado), no el izquierdo.
+1. **Nunca destructivo sin confirmación.** Codex modifica archivos. Que
+   corra sobre un repo con git limpio, o pedir confirmación hablada.
+2. **Avisar que tarda.** El TTS dice "lo estoy viendo" al delegar, para que
+   el silencio de 15 s no parezca que se colgó.
+3. **Detrás de una interfaz.** Si OpenAI cambia algo, se reemplaza un solo
+   archivo.
 
 ---
 
 ## El soul-connector (overlay) ✅
 
-Es render, no IA. No hace falta sincronía labial ni fonemas. Única
-implementación activa: `soul-connector-gnome/`, extensión de GNOME Shell
-— corre adentro de `gnome-shell`, que ya está en memoria, así que cuesta
-prácticamente nada (medido: por debajo del ruido de medición). Ver
-`soul-connector-gnome/README.md` para el detalle completo (geometría
-medida, trampas de GNOME 50, arrastre con el mouse).
+Es render, no IA. No hace falta sincronía labial ni fonemas. Implementado
+con `pywebview` (backend Qt/QtWebEngine — no hay PyGObject en este
+entorno, así que GTK no está disponible) renderizando
+`soul_connector/index.html` (SiriWave vendorizada), y
+`soul_connector/server.py` mandándole niveles/estado por WebSocket local
+(`ws://127.0.0.1:8765`).
 
-Infraestructura compartida en `soul_connector/` (no es la implementación
-vieja completa, sobrevivió a la deprecación de abajo porque no es render):
-`server.py` sirve el WebSocket local (`ws://127.0.0.1:8765`) por el que
-`main.py` manda niveles/estado, y `audio_sistema.py` lee el audio de
-salida del sistema (PipeWire) para el estado "música". Ninguno de los dos
-sabe ni le importa qué cliente los está escuchando.
+Hay una segunda implementación, `soul-connector-gnome/`: la misma onda
+pero como extensión de GNOME Shell, corriendo adentro de `gnome-shell` en
+vez de levantar un Chromium propio (~1,3 GB de RAM medidos vs. por debajo
+del ruido de medición). `./tero` detecta sola cuál usar — ver
+`soul-connector-gnome/README.md` para el detalle completo (geometría
+medida, trampas de GNOME 50, arrastre con el mouse). Lo que sigue acá
+describe la implementación original en pywebview.
 
 - Señal: RMS real, no solo del TTS. Tres fuentes según el estado:
   el audio del TTS mientras habla, el **micrófono en vivo** mientras
-  escucha (vía el callback de `sounddevice` en `Grabador`, con auto-gain
+  escucha (vía el callback de `sounddevice` en `Recorder`, con auto-gain
   contra el pico reciente de volumen — un multiplicador fijo no sirve
   porque el rms de un mic vive en una escala mucho más baja e
   impredecible que la del audio de TTS), y el audio de salida del sistema
-  (PipeWire, `soul_connector/audio_sistema.py`) cuando no pasa nada más.
+  (PipeWire, `soul_connector/system_audio.py`) cuando no pasa nada más.
 - **Suavizado asimétrico**: ataque rápido, decaimiento lento. Esto es lo
   que separa "se ve pro" de "se ve amateur". El RMS crudo tiembla.
-- Colores por estado: la onda usa el estilo `"ios9"` de SiriWave (portado
-  a Cairo en `soul-connector-gnome/onda.js`), que ignora el color del
-  constructor y trae sus curvas hardcodeadas en azul/rojo/verde — hay que
-  recolorear las curvas a mano en cada cambio de estado para que el color
-  realmente cambie, no alcanza con un glow de afuera.
-- Cinco estados visuales: **escuchando** (blanco, reactivo al mic),
+- Ventana: sin bordes, sin foco. "Siempre encima" no es persistente bajo
+  Mutter sin `gtk4-layer-shell` (no instalado): se fuerza
+  `QT_QPA_PLATFORM=xcb` para que la ventana sea una ventana X11/XWayland
+  real que `wmctrl` puede manipular, y se reintenta "traer al frente" en
+  bucle mientras habla. Reposicionar por código (x/y de creación,
+  `wmctrl -e`) no tiene ningún efecto en este entorno (confirmado); la
+  única forma real de moverla es arrastrarla (`easy_drag=True`), y no hay
+  forma de persistir esa posición entre reinicios del proceso.
+- Colores por estado: la onda usa el estilo `"ios9"` de SiriWave, que
+  ignora el color del constructor y trae sus curvas hardcodeadas en
+  azul/rojo/verde — hay que recolorear las curvas a mano en cada cambio
+  de estado (ver `applyState()` en `index.html`) para que el color
+  realmente cambie, no alcanza con el `drop-shadow` de afuera.
+- Cuatro estados visuales: **escuchando** (blanco, reactivo al mic),
   **pensando** (violeta claro), **hablando** (multicolor original de la
   librería — a pedido explícito del usuario, es el único estado que no
   se fuerza a un color plano), **música** (turquesa, reactivo al audio
-  del sistema), **codex** (cian + partículas, para cuando Tero delegue en
-  Codex/ChatGPT — fase 4, visual ya implementado). Más un idle que respira.
+  del sistema). Más un idle que respira.
 - Debajo de la onda, nombre de la canción + barra de progreso de lo que
   suena en Spotify (polling cada ~5s, interpolado en cada frame). Se
   oculta sola si queda pausada 30s seguidos.
 
-**El daemon tiene que funcionar sin el soul-connector.** Es un cliente
-opcional del stream de niveles, nunca una dependencia — ver Reglas de
-arquitectura.
-
-### Overlay pywebview: deprecado (2026-09-16)
-
-Hasta acá hubo una segunda implementación completa del overlay,
-`soul_connector/ventana.py` + `index.html` + `siriwave.umd.js`
-(pywebview, backend Qt/QtWebEngine), corriendo como proceso aparte —
-único motivo por el que existió: funcionaba en cualquier escritorio, no
-solo GNOME. Costaba ~1,3 GB de RAM (un Chromium entero para dibujar una
-onda de 260x74) contra el ruido de medición de la extensión, y mantener
-dos implementaciones del mismo feature en paralelo era mantenimiento
-duplicado real — nada garantizaba que se mantuvieran sincronizadas más
-que la disciplina de quien editaba (ver Reglas de arquitectura, hallazgo
-de la auditoría del mismo día). Se sacó del repo (`git rm`), junto con la
-dependencia `pywebview[qt]` de `pyproject.toml` (se llevó 17 paquetes
-transitivos de Qt/PyQt6) y la rama del launcher `./tero` que la levantaba.
-El detalle de cómo estaba resuelto el "siempre encima" en Wayland sin
-`gtk4-layer-shell` (`QT_QPA_PLATFORM=xcb`, `wmctrl`, arrastre con
-`easy_drag`) quedó en el historial de git si hace falta retomarlo.
-
-### `puente.js`: lo no-visual vive aparte (2026-09-16)
-
-`soul-connector-gnome/extension.js` (la clase `SoulConnector`) es *solo*
-render — nada de lógica de Tero. Dos herramientas (`mover_ventana_a_monitor`,
-`capturar_pantalla`) necesitan código corriendo adentro de gnome-shell por
-una razón técnica real (Wayland no deja hacer ciertas cosas desde afuera
-del compositor: mover una ventana nativa, saltear el `AccessDenied` del
-D-Bus de screenshot), no por elección de diseño. Ese código vive en
-`soul-connector-gnome/puente.js` (clase `Puente`, expone
-`org.gnome.Shell.Extensions.Tero` por D-Bus), separado del archivo de la
-onda — `extension.js` solo lo instancia en `enable()`/`disable()`, igual
-que ya hacía con `TeroIndicator` (panel.js). Ver Reglas de arquitectura.
+**El daemon tiene que funcionar sin el soul-connector.** La ventana es un
+cliente opcional del stream de niveles.
 
 ---
 
 ## Servicio systemd y menú de GNOME ✅
 
 `systemd/tero.service` (unidad de usuario, `Restart=no` a propósito —
-mismo criterio que `salud.py`: avisar, no revivir solo si cortó por algo
+mismo criterio que `health.py`: avisar, no revivir solo si cortó por algo
 real) envuelve `./tero` sin duplicar su lógica de arranque/logging. Se
 instala con un symlink:
 
@@ -571,7 +443,7 @@ Si la extensión de GNOME del soul-connector está activa,
 GNOME (el de WiFi/Bluetooth/etc., arriba a la derecha) con Iniciar/
 Reiniciar/Cerrar/Ver log, controlando este mismo servicio por
 `systemctl --user` — relee el estado real cada 4s en vez de confiar en
-el último click, así que si `salud.py` corta a Tero solo o alguien lo
+el último click, así que si `health.py` corta a Tero solo o alguien lo
 para desde una terminal, el toggle lo nota igual. Es una pieza aparte de
 `extension.js` (se instancia en `enable()`/`disable()` junto con la
 onda), no depende de que el soul-connector esté dibujándose.
@@ -617,7 +489,7 @@ dos:
   querer: murió con `CUDA out of memory`. No rompe nada, pero esta GPU
   además maneja el escritorio, así que la presión de VRAM lo pone lento.
 
-`salud.py` vigila esto en segundo plano (cada 5 s) con un criterio simple:
+`health.py` vigila esto en segundo plano (cada 5 s) con un criterio simple:
 **la RAM corta, lo térmico solo avisa** (cortar por temperatura sería
 redundante con lo que la placa ya hace sola; solo corta si el slowdown por
 hardware se sostiene ~1 min, que ya habla de un problema de ventilación).
@@ -636,105 +508,6 @@ que `./tero` distingue de una caída de verdad.
 - Whitelist estricta de comandos.
 - Confirmación explícita para cualquier acción destructiva.
 - Notificación con la transcripción antes de ejecutar, para ver qué entendió.
-
----
-
-## Reglas de arquitectura (para no volverse un zombie)
-
-Nacieron el 2026-09-16 cuando `soul-connector-gnome/extension.js` empezó a
-juntar, además de la onda, dos herramientas D-Bus sin relación entre sí
-(mover ventanas, capturar pantalla). Se corrigió (ver `puente.js` arriba),
-pero la tentación de ir agregando código donde sea más cómodo en el
-momento va a volver a aparecer. Estas reglas están para frenarla en la
-próxima herramienta, no solo en esta:
-
-- **Cada pieza hace una sola cosa, y SOUL nunca es lógica.** El
-  soul-connector (`soul-connector-gnome/extension.js`, la clase
-  `SoulConnector`; `soul_connector/` es solo la infraestructura
-  compartida de WebSocket/audio, no render) es render puro — dibuja la
-  onda, manda su posición, y nada más. **Tero
-  (el daemon) tiene que funcionar perfectamente sin SOUL** — es un cliente
-  opcional del WebSocket de niveles, nunca una dependencia. Si algo tiene
-  que correr adentro de gnome-shell por necesidad técnica real (no por
-  comodidad), va en un archivo aparte, nunca mezclado con la clase que
-  dibuja (ver `puente.js`). Antes de sumar un método nuevo ahí, primero
-  confirmar que de verdad no se puede hacer desde el proceso de Tero
-  (Python) — la mayoría de las cosas sí se pueden (AT-SPI, D-Bus público,
-  `playerctl`, `wmctrl`); esta puerta es solo para lo que Wayland/Mutter
-  bloquea desde afuera del compositor.
-- **Sin abstracciones antes de tiempo.** Una herramienta nueva es un
-  archivo de ~20-30 líneas en `herramientas/` (ver esa sección). No se
-  factoriza nada hasta que hay un segundo caso real que lo necesite —
-  `herramientas/_gnome_dbus.py` se extrajo recién cuando `capturar_pantalla`
-  fue la segunda herramienta en necesitar el mismo llamado D-Bus, no
-  antes. La interfaz `Plataforma` (`plataforma/base.py`) es el ejemplo de
-  lo contrario: se diseñó para una migración a Windows que nunca pasó, y
-  hoy la mayoría de las herramientas Linux-específicas la ignoran y
-  llaman a su API real directo — no vale la pena consolidar eso sin un
-  motivo real (ver nota en "Capa de plataforma").
-- **Nada de listas cerradas que no generalizan** (`Literal[...]`, enums
-  hardcodeados) para algo que el mundo real no tiene como lista fija —
-  ver el caso de youtube_canales, que empezó como `Literal` de siete
-  canales y se reescribió a aprendizaje por uso.
-- **El ruteo sale del tool calling, nunca de un clasificador aparte.**
-  "Esto lo resuelvo yo" vs. "esto lo mando a Codex" lo decide el modelo
-  local viendo el catálogo de herramientas (`delegar_a_codex` es una
-  herramienta más), no un paso previo con reglas de texto (ver Cerebro).
-- **Confirmación explícita para lo destructivo o costoso**, nunca
-  silencioso — ver Seguridad y los tres cuidados de `delegar_a_codex`.
-- **`BITACORA.html` se mantiene, y es responsabilidad del agente, no del
-  usuario.** Decisión explícita (2026-09-16, ante la pregunta de si
-  convenía dejarla morir): se conserva como el diario narrado de "qué se
-  fue haciendo y por qué" (distinto de `git log`, que dice *qué* cambió
-  pero no el razonamiento en vivo detrás). Cualquier agente que termine
-  una sesión de trabajo real en este repo (features, bugs resueltos,
-  decisiones de arquitectura como esta) **tiene que agregar una entrada
-  antes de cerrar** — no esperar a que el usuario lo pida. Formato:
-  sección `<div class="entrada">` dentro del `<section class="dia">` de
-  la fecha (crear el `<section>` si es un día nuevo), con un
-  `<span class="tag">` (`feature`/`bug`/`fix`/`decisión`/`config`/`infra`/
-  `commit`) y uno o más `<p>` contando el motivo y lo que se probó en
-  vivo — mismo nivel de detalle que las entradas ya escritas, no un
-  resumen de una línea.
-
-### Auditoría 2026-09-16: dónde está parado el proyecto
-
-Pedida explícitamente por el usuario ("después de tantos días de
-desarrollo puede pasar que la app se transforme en un engendro") para
-chequear el estado real contra estas reglas, no solo confiar en que se
-están siguiendo. Veredicto: **con ~5000 líneas (3450 Python + 1600 JS),
-todavía no es un engendro** — capas separadas por responsabilidad, cero
-`except:` desnudos, herramientas chicas y autocontenidas. Los hallazgos
-de esa auditoría, y lo que se hizo/queda con cada uno:
-
-- **Dos implementaciones paralelas del overlay** (pywebview vs. extensión
-  de GNOME) — el riesgo más real que había: nada garantizaba que se
-  mantuvieran sincronizadas más que la disciplina de quien editara.
-  **Resuelto el mismo día**: se deprecó pywebview (ver "El soul-connector",
-  sección "Overlay pywebview: deprecado").
-- **`Plataforma` (`plataforma/base.py`) sin uso real** en 3 de sus 5
-  métodos (`ventana_activa`, `capturar_pantalla`, `media`). **Resuelto el
-  2026-09-16**: decisión del usuario, se sacaron de la interfaz — ver
-  "Capa de plataforma".
-- **Cero tests automatizados.** Hay comportamientos críticos documentados
-  *solo en prosa* acá (ej. "0/12 vs 12/12 tool calls" con historial en
-  prosa en Fase 2, el fix de preguntas colgadas en `cerebro/router.py`, el
-  bug de PIDs en `_ducking.py`), verificados una vez a mano y nunca más.
-  Sin un test que lo capture, un cambio futuro puede reintroducir el mismo
-  bug sin que nadie lo note hasta escucharlo fallar en vivo. **Pendiente**:
-  no hace falta un framework grande, alcanza con 5-10 casos de regresión
-  para lo ya medido acá.
-- **`BITACORA.html` desactualizado** desde 2026-09-14 pese a comits
-  posteriores. **Decisión del usuario (2026-09-16): se mantiene**, y pasa
-  a ser responsabilidad del agente que trabaje en el proyecto, no del
-  usuario, mantenerla al día — ver regla nueva abajo.
-- **`soul-connector-gnome/extension.js` como candidato natural a
-  acumular** la próxima feature visual que se apile ahí en vez de en un
-  archivo propio (como ya hacen `onda.js`/`barra.js`/`particulas.js`).
-  No es un problema hoy, es una advertencia para la próxima vez.
-
-Pendiente para retomar, en orden: fase 4 (`delegar_a_codex`, siguiendo las
-reglas de arriba) y los tests de regresión.
 
 ---
 
@@ -761,26 +534,27 @@ reglas de arriba) y los tests de regresión.
    Lección para el futuro: si el modelo chico empieza a portarse mal,
    sospechar primero de lo que Tero le está metiendo en el contexto,
    antes de culpar al sampling o de agregar otra regla al prompt.
-3. **Contexto** ✅ — captura bajo demanda. `leer_terminal` migrado a
-   AT-SPI (ver Herramientas), sin ventana activa expuesta como dato
-   aparte — se usa internamente solo para saber qué está enfocado, no se
-   muestra a ningún lado. `capturar_pantalla` (2026-09-16): guarda la
-   captura; interpretarla queda para cuando el usuario mencione fase 4 de
-   nuevo con soporte de imágenes (ver [[investigacion-chatgpt-imagenes]]
-   en la memoria del agente — pospuesto a pedido explícito).
-4. **Codex** ✅ (2026-09-16) — no terminó siendo "la rama pesada" del plan
-   original: es un hand-off (VS Code + terminal con Codex), no un agente
-   autónomo corriendo en background. Ver `delegar_a_codex` más arriba
-   para el diseño completo.
+3. **Contexto** — captura bajo demanda. `read_terminal` migrado a AT-SPI
+   ✅ (ver Herramientas), sin ventana activa expuesta como dato aparte —
+   se usa internamente solo para saber qué está enfocado, no se muestra
+   a ningún lado. Falta `capture_screen`.
+4. **Codex** — la rama pesada. No arrancado.
 5. **Soul-connector** ✅ — overlay con WebSocket, ver sección dedicada más arriba.
-6. **Linux** ✅ — `plataforma/linux.py` ya existe y funciona (desarrollo
+6. **Linux** ✅ — `os_platform/linux.py` ya existe y funciona (desarrollo
    pasó a Linux desde el arranque del proyecto; no hay
-   `plataforma/windows.py`).
+   `os_platform/windows.py`).
+7. **Multiplataforma (macOS)** — no arrancada. Que `uv sync` y el loop
+   completo (tecla → grabar → STT → cerebro → TTS) anden en una Mac, con
+   lo GNOME-específico marcado como "solo Linux". Plan completo, con
+   diagnóstico de qué está atado a Linux y las fases 0 a 3, en
+   `docs/PLAN-MULTIPLATAFORMA.md`.
 
-Estado actual: **catálogo completo, las 6 fases originales cerradas.**
-Pendiente para retomar (ver auditoría de arquitectura más arriba): tests
-de regresión para comportamientos ya medidos a mano, y la generación de
-imágenes por voz (pospuesta, ver nota de la fase 4).
+Estado actual: **fases 1, 2, 5 y 6 completas y commiteadas.** Pendiente
+para retomar:
+- Fase 3 (Contexto): `read_terminal` ya migrado a AT-SPI (2026-09-13).
+  Falta `capture_screen` (depende de `Platform.capture_screen`).
+- `delegate_to_codex` (fase 4) sigue sin arrancar.
+- Fase 7 (macOS): sin arrancar, plan escrito.
 
 ---
 

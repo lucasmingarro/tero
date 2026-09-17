@@ -43,17 +43,25 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # si no tenés uv
 uv sync
 ```
 
+En macOS, `uv` sale por Homebrew (el script de arriba también anda):
+
+```bash
+brew install uv
+uv sync
+```
+
 ### 2. Paquetes de sistema
 
 ```bash
-sudo apt install -y libportaudio2 playerctl wmctrl
+sudo apt install -y libportaudio2 playerctl wmctrl \
+    libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1
 ```
 
 | Paquete | Para qué |
 |---|---|
 | `libportaudio2` | Lib nativa de `sounddevice`, no viene en el wheel de PyPI |
 | `playerctl` | Control de reproducción (play/pausa/siguiente) vía MPRIS |
-| `wmctrl` | Posicionar la ventana dedicada de YouTube y leer terminal por AT-SPI (ver `herramientas/_pantalla_youtube.py`, `herramientas/_leer_terminal_atspi.py`) |
+| `wmctrl`, `libxcb-cursor0`, `libxcb-icccm4`, `libxcb-keysyms1` | Solo para el soul-connector **clásico** (overlay pywebview) — ver "El soul-connector" más abajo. El soul-connector como extensión de GNOME no los necesita |
 
 ### 3. Permisos de teclado
 
@@ -82,7 +90,7 @@ latencia extra), la instruct no.
 
 ```bash
 uv run python -m piper.download_voices es_AR-daniela-high \
-    --download-dir voz/modelos
+    --download-dir voice/models
 ```
 
 ### 6. Whisper (STT)
@@ -116,9 +124,9 @@ mientras Groq esté disponible).
 
 ### 7. Spotify (opcional, para música real)
 
-Sin esto, los pedidos de música fallan. Con esto, `reproducir_musica`
+Sin esto, los pedidos de música fallan. Con esto, `play_music`
 busca la canción real y la reproduce (no solo abre una búsqueda), y
-`reproducir_musica_aleatoria` elige algo nuevo de "Tus me gusta" para los
+`play_random_music` elige algo nuevo de "Tus me gusta" para los
 pedidos genéricos ("poné música") en vez de repetir siempre lo último.
 Ambas encolan varios temas más detrás del primero, así que "siguiente"
 tiene a dónde avanzar.
@@ -131,7 +139,7 @@ tiene a dónde avanzar.
 4. Login único:
 
    ```bash
-   uv run python -m herramientas._spotify_auth
+   uv run python -m tools._spotify_auth
    ```
 
    Se abre el navegador, autorizás, y el refresh token queda guardado en
@@ -173,9 +181,9 @@ free (sí deja buscar).
 
 Ya viene con valores razonables. Lo más probable que quieras ajustar:
 
-- `[tecla] nombre` — cuál tecla activa la escucha (nombre evdev, ej.
+- `[key] name` — cuál tecla activa la escucha (nombre evdev, ej.
   `KEY_RIGHTCTRL`, `KEY_PAUSE`).
-- `[stt] modelo` — `large-v3` (preciso, más lento) vs `medium`/`small`
+- `[stt] model` — `large-v3` (preciso, más lento) vs `medium`/`small`
   (más rápido, se equivoca más con nombres propios). Con Groq configurado
   (paso 6b), esto es solo el respaldo offline; sin Groq, es la
   transcripción de siempre.
@@ -201,14 +209,14 @@ Tero
   … Arrancando el daemon (carga la voz; Whisper local solo si Groq falla)
   ✓ Voz cargada
   ✓ Daemon escuchando (tecla: KEY_RIGHTCTRL)
-  ✓ Soul-connector: extensión de GNOME activa
+  ✓ Soul-connector: usando la extensión de GNOME (no hace falta la de pywebview)
 
   Todo listo. Ctrl+C para cortar todo.
 ```
 
-(Si la extensión no está instalada/habilitada, esa línea es un aviso en
-vez de un check — nunca corta el arranque, el soul-connector siempre es
-opcional.)
+(La última línea depende de cuál detecte: `Soul-connector en pantalla` si
+usa el clásico, o un aviso si no levantó ninguno de los dos — nunca corta
+el arranque, el soul-connector siempre es opcional.)
 
 Se niega a arrancar si ya hay otro Tero corriendo: dos daemons cargan dos
 veces Whisper `large-v3` en la GPU y el segundo muere con `CUDA failed
@@ -216,8 +224,9 @@ with error out of memory`.
 
 Los logs quedan en `logs/` (ignorado por git): `tero.log` tiene el arranque
 paso a paso más la salida del daemon (transcripción, qué herramienta se
-llamó, tiempos de cada etapa). Cada corrida empieza un log nuevo y
-conserva el anterior como `.1`.
+llamó, tiempos de cada etapa), `soul_connector.log` el ruido de la
+ventana. Cada corrida empieza un log nuevo y conserva el anterior como
+`.1`.
 
 Para tenerlo a mano desde cualquier lado:
 
@@ -230,10 +239,11 @@ ln -s "$PWD/tero" ~/.local/bin/tero   # opcional
 Para desarrollo, si querés correr solo una parte:
 
 ```bash
-uv run python main.py   # solo el daemon
+uv run python main.py                          # solo el daemon
+QT_QPA_PLATFORM=xcb uv run python -m soul_connector.window   # solo el soul-connector clásico
 ```
 
-(El soul-connector, la extensión de GNOME, no se lanza así: una vez
+(El soul-connector como extensión de GNOME no se lanza así: una vez
 instalado, vive dentro de `gnome-shell` y anda solo.)
 
 ### El soul-connector (overlay opcional)
@@ -242,34 +252,41 @@ Onda animada que reacciona a la voz de Tero, al micrófono mientras
 escucha, y a la música de fondo, más el nombre/progreso de lo que suena en
 Spotify (se oculta sola si queda pausado 30s) y, mientras arranca, en qué
 etapa de carga va. Es un cliente aparte, opcional — el daemon principal
-funciona sin él, y `./tero` sigue adelante si no está.
+funciona sin él, y `./tero` sigue adelante si no levanta.
 
-Implementado como extensión de GNOME Shell (`soul-connector-gnome/`):
-corre adentro de `gnome-shell`, que ya está en memoria, así que cuesta
-prácticamente nada (medido: por debajo del ruido de medición del propio
-`gnome-shell`). Se mueve con `Ctrl+Alt` + arrastrar. Instalación:
+Hay dos implementaciones, y `./tero` detecta sola cuál usar:
 
-```bash
-cd soul-connector-gnome && ./instalar.sh
-```
+- **Extensión de GNOME** (`soul-connector-gnome/`, preferida si estás en
+  GNOME): corre adentro de `gnome-shell`, que ya está en memoria, así que
+  cuesta prácticamente nada (medido: por debajo del ruido de medición del
+  propio `gnome-shell`) contra ~1,3 GB de RAM del soul-connector clásico.
+  Se mueve con `Ctrl+Alt` + arrastrar. Instalación:
 
-Es un symlink a esta carpeta del repo + `gnome-extensions enable`. En
-Wayland, GNOME no relee extensiones nuevas hasta reiniciar la sesión
-(cerrar sesión y volver a entrar) — después de eso queda andando solo.
-`./desinstalar.sh` lo saca. Detalle completo, incluidas las trampas de
-GNOME 50, en `soul-connector-gnome/README.md`.
+  ```bash
+  cd soul-connector-gnome && ./install.sh
+  ```
 
-(Hubo una segunda implementación, pywebview + QtWebEngine, que funcionaba
-en cualquier escritorio — se deprecó el 2026-09-16: mantener dos overlays
-del mismo feature en paralelo era riesgo de que se desincronizaran sin que
-nada lo avisara, y la de GNOME ya cubre el caso real de uso. Ver CLAUDE.md,
-"Reglas de arquitectura".)
+  Es un symlink a esta carpeta del repo + `gnome-extensions enable`. En
+  Wayland, GNOME no relee extensiones nuevas hasta reiniciar la sesión
+  (cerrar sesión y volver a entrar) — después de eso queda andando solo.
+  `./uninstall.sh` lo saca. Detalle completo, incluidas las trampas de
+  GNOME 50, en `soul-connector-gnome/README.md`.
+
+- **Overlay clásico** (`soul_connector/`, pywebview + QtWebEngine):
+  funciona en cualquier escritorio, no solo GNOME, a cambio de esos
+  ~1,3 GB de RAM. Es el que usa `./tero` si no detecta la extensión de
+  GNOME habilitada. El `QT_QPA_PLATFORM=xcb` (que `./tero` ya pone solo)
+  es necesario en sesiones Wayland nativas: sin eso, la ventana no puede
+  pedirle al gestor de ventanas que se quede "siempre encima" mientras
+  habla.
 
 ## Herramientas disponibles
 
-`consultar_clima`, `reproducir_musica`, `reproducir_musica_aleatoria`,
-`control_media`, `ajustar_volumen`,
-`abrir_url`, `buscar_en_sitio` (mercadolibre/google/youtube/amazon/maps),
-`calcular_viaje` (distancia y ruta entre dos lugares), `leer_terminal`,
-`consultar_hora`, `mandar_al_celular`. Cada una es un archivo de ~20-80
-líneas en `herramientas/` — agregar una nueva no toca el núcleo.
+`get_weather`, `play_music`, `play_random_music`,
+`control_playback`, `set_volume`,
+`open_url`, `search_site` (mercadolibre/google/youtube/amazon/maps),
+`get_trip` (distancia y ruta entre dos lugares), `read_terminal`,
+`get_time`, `send_to_phone`, `play_youtube_channel`, `open_youtube`,
+`suggest_youtube_channels`, `move_window_to_monitor`. Cada una es un
+archivo de ~20-80 líneas en `tools/` — agregar una nueva no toca el
+núcleo.

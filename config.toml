@@ -1,32 +1,40 @@
-[tecla]
-# Nombre de tecla evdev (ver: python -c "from evdev import ecodes; print([k for k in dir(ecodes) if k.startswith('KEY_')])")
-nombre = "KEY_RIGHTCTRL"
-# Umbral en segundos: por debajo es un toque corto (toggle), por encima push-to-talk.
-umbral_toggle_s = 0.35
+[key]
+# evdev key name (see: python -c "from evdev import ecodes; print([k for k in dir(ecodes) if k.startswith('KEY_')])")
+name = "KEY_RIGHTCTRL"
+# Threshold in seconds: below it is a short tap (toggle), above it is push-to-talk.
+toggle_threshold_s = 0.35
+
+# Per-OS override of the key: the names have nothing in common between
+# platforms, because each one comes from a different library (evdev above,
+# pynput here). Everything else in [key] is shared.
+[key.macos]
+# pynput key name (see: uv run python -c "from pynput.keyboard import Key; print(sorted(k.name for k in Key))")
+# A single character works too, e.g. name = "ñ".
+name = "ctrl_r"
 
 [audio]
-muestreo_hz = 16000
-canales = 1
+sample_rate_hz = 16000
+channels = 1
 
 [stt]
-# Con una key de Groq en ~/.config/tero/groq_key (ver voz/stt.py), esto es
-# solo el respaldo offline: se carga recién si Groq falla, no al arrancar.
-# Sin key, es la transcripción de siempre, y se carga al arrancar.
+# With a Groq key in ~/.config/tero/groq_key (see voice/stt.py), this is
+# only the offline fallback: it loads only if Groq fails, not at startup.
+# With no key, it is the usual transcription, and it loads at startup.
 #
-# "large-v3": preferimos precisión sobre latencia. El problema de nombres
-# mal entendidos no es de una ciudad puntual, va a aparecer todo el tiempo
-# con cualquier nombre propio — mejor resolverlo de raíz que a pistas.
-modelo = "large-v3"
+# "large-v3": accuracy is preferred over latency. The problem of
+# misheard names is not about one particular city, it will show up all the
+# time with any proper noun -- better to solve it at the root than by hints.
+model = "large-v3"
 device = "auto"
 compute_type = "default"
 
 [tts]
-voz = "es_AR-daniela-high"
+voice = "es_AR-daniela-high"
 
-[cerebro]
-modelo = "qwen3:4b-instruct"
+[brain]
+model = "qwen3:4b-instruct"
 
 [spotify]
-# App creada en https://developer.spotify.com/dashboard, solo Web API.
-# No es secreto: un client_id de app pública (PKCE) no requiere ocultarse.
+# App created at https://developer.spotify.com/dashboard, Web API only.
+# Not a secret: a public app (PKCE) client_id does not need hiding.
 client_id = "5402ca5c0ce646a29462c39eed5b91ea"

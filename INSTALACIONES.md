@@ -22,10 +22,10 @@ puro. Instalar un paquete de sistema solo cuando de verdad no hay otra.
 | Usuario en grupo `input` | `sudo usermod -aG input $USER` | Para que `evdev` lea `/dev/input/event*` sin ser root (tecla global) | `sudo gpasswd -d $USER input` (+ relogin) |
 | Ollama | script oficial de instalación (`curl -fsSL https://ollama.com/install.sh \| sh`) | Servidor del modelo local (Qwen3), corre como servicio systemd (`ollama.service`, usuario/grupo propios `ollama`) | `sudo systemctl disable --now ollama`, borrar `/usr/local/bin/ollama`, `/usr/share/ollama`, `sudo userdel ollama` |
 | Modelos `qwen3:4b-instruct` y `qwen3:4b` | `ollama pull qwen3:4b-instruct` | Cerebro del asistente (tool calling) | `ollama rm qwen3:4b-instruct qwen3:4b` (~5 GB en `~/.ollama/models`) |
-| `playerctl` | `sudo apt install playerctl` | `control_media`: play/pausa/siguiente vía MPRIS (D-Bus) | `sudo apt remove playerctl` |
-| `wmctrl` | `sudo apt install wmctrl` | Posicionar y fijar "siempre encima" la ventana dedicada de YouTube (`herramientas/_pantalla_youtube.py`) | `sudo apt remove wmctrl` |
+| `playerctl` | `sudo apt install playerctl` | `control_playback`: play/pausa/siguiente vía MPRIS (D-Bus) | `sudo apt remove playerctl` |
+| `wmctrl` | `sudo apt install wmctrl` | El soul-connector **clásico** (pywebview): pedirle a Mutter "siempre encima" (`-b add,above`) para la ventana, de forma más persistente que el flag `on_top` de Qt. El soul-connector como extensión de GNOME (`soul-connector-gnome/`) no lo necesita — vive en la capa de *chrome* del shell, siempre encima sin pedirlo | `sudo apt remove wmctrl` |
+| `libxcb-cursor0`, `libxcb-icccm4`, `libxcb-keysyms1` | `sudo apt install libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1` | El soul-connector clásico: dependencias del plugin `xcb` de Qt, para correr vía `QT_QPA_PLATFORM=xcb` (XWayland) — la sesión es Wayland nativo, donde `wmctrl` no ve ninguna ventana | `sudo apt remove libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1` |
 | Servicio systemd de usuario `tero.service` | `ln -s ~/proyectos/tero/systemd/tero.service ~/.config/systemd/user/tero.service && systemctl --user daemon-reload` | Arrancar/parar/reiniciar Tero por `systemctl --user` en vez de `pkill`/`nohup` a mano — es lo que usa el toggle "Tero" del menú rápido de GNOME (`soul-connector-gnome/panel.js`, 2026-09-14). No autoarranca en el login salvo que se corra además `systemctl --user enable tero` | `systemctl --user disable --now tero; rm ~/.config/systemd/user/tero.service` |
-| Bloque en `~/.bashrc` (entre `# --- Tero:` y `# --- fin Tero ---`) | Agregado a mano, ver CLAUDE.md sección `delegar_a_codex` | `PROMPT_COMMAND` escribe el directorio actual a `~/.cache/tero/cwd_actual` en cada prompt — es la única forma encontrada de que `delegar_a_codex` sepa en qué proyecto está el usuario (ni Ptyxis ni Warp exponen su cwd activo por D-Bus/AT-SPI, investigado en vivo el 2026-09-16) | Borrar el bloque entre esos comentarios de `~/.bashrc`, y `rm -rf ~/.cache/tero` |
 
 ## Cuentas / apps externas registradas
 
@@ -34,16 +34,10 @@ proyecto, esto queda huérfano si no se borra a mano:
 
 | Qué | Dónde | Para qué | Cómo revertir |
 |---|---|---|---|
-| App "Tero" en Spotify | https://developer.spotify.com/dashboard (cuenta del usuario) | Client ID para la Web API (búsqueda + reproducción real, ver `herramientas/_spotify_auth.py`). Client ID guardado en `config.toml` (no es secreto, PKCE no lo necesita) | Borrar la app desde el dashboard |
-| Token OAuth de Spotify | `~/.config/tero/spotify_token.json` (permisos 600) | Refresh token de la sesión logueada (scopes: `user-modify-playback-state`, `user-read-playback-state`, `user-library-read` -- este último para `reproducir_musica_aleatoria`, que elige de "Tus me gusta") | `rm ~/.config/tero/spotify_token.json` (+ opcionalmente revocar el acceso de la app desde la cuenta de Spotify) |
-| Bot de Telegram "tero_asistente_bot" | Creado con @BotFather en la cuenta de Telegram del usuario | `mandar_al_celular`: mandar texto/links al celular (Samsung SM-A556E) del usuario, gratis, sin límites de uso personal | Borrar el bot hablándole a @BotFather (`/deletebot`), y `rm ~/.config/tero/telegram.json` |
-| Cuenta en GroqCloud (console.groq.com) + API key | Cuenta del usuario, sin tarjeta. **Zero Data Retention (Global ZDR)** activado en Settings → Data Controls | STT online (`voz/stt.py`, `GroqSTT`): mismo `whisper-large-v3` que el respaldo local, gratis, plan free con 2000 pedidos/día -- muy por encima del uso real de un push-to-talk personal. Key guardada en `~/.config/tero/groq_key` (permisos 600), igual que el token de Spotify. Ojo: la voz sale de la máquina en cada pedido mientras Groq esté disponible (ver CLAUDE.md, sección Seguridad) | `rm ~/.config/tero/groq_key` (Tero cae solo a Whisper local, ver abajo) + revocar la key y borrar la cuenta desde la consola de Groq |
-
-## Huérfano tras deprecar el soul-connector pywebview (2026-09-16)
-
-| Qué | Quedó de | Se puede sacar con |
-|---|---|---|
-| `libxcb-cursor0`, `libxcb-icccm4`, `libxcb-keysyms1` | Dependencias del plugin `xcb` de Qt, para el overlay pywebview (`QT_QPA_PLATFORM=xcb`) — ese overlay se sacó del repo, ver CLAUDE.md "Reglas de arquitectura" | `sudo apt remove libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1` (no lo usa nada más del proyecto; no se removió solo por no tocar el sistema sin que lo pidas) |
+| App "Tero" en Spotify | https://developer.spotify.com/dashboard (cuenta del usuario) | Client ID para la Web API (búsqueda + reproducción real, ver `tools/_spotify_auth.py`). Client ID guardado en `config.toml` (no es secreto, PKCE no lo necesita) | Borrar la app desde el dashboard |
+| Token OAuth de Spotify | `~/.config/tero/spotify_token.json` (permisos 600) | Refresh token de la sesión logueada (scopes: `user-modify-playback-state`, `user-read-playback-state`, `user-library-read` -- este último para `play_random_music`, que elige de "Tus me gusta") | `rm ~/.config/tero/spotify_token.json` (+ opcionalmente revocar el acceso de la app desde la cuenta de Spotify) |
+| Bot de Telegram "tero_asistente_bot" | Creado con @BotFather en la cuenta de Telegram del usuario | `send_to_phone`: mandar texto/links al celular (Samsung SM-A556E) del usuario, gratis, sin límites de uso personal | Borrar el bot hablándole a @BotFather (`/deletebot`), y `rm ~/.config/tero/telegram.json` |
+| Cuenta en GroqCloud (console.groq.com) + API key | Cuenta del usuario, sin tarjeta. **Zero Data Retention (Global ZDR)** activado en Settings → Data Controls | STT online (`voice/stt.py`, `GroqSTT`): mismo `whisper-large-v3` que el respaldo local, gratis, plan free con 2000 pedidos/día -- muy por encima del uso real de un push-to-talk personal. Key guardada en `~/.config/tero/groq_key` (permisos 600), igual que el token de Spotify. Ojo: la voz sale de la máquina en cada pedido mientras Groq esté disponible (ver CLAUDE.md, sección Seguridad) | `rm ~/.config/tero/groq_key` (Tero cae solo a Whisper local, ver abajo) + revocar la key y borrar la cuenta desde la consola de Groq |
 
 ## Evaluado y descartado (para no repetir la discusión)
 
@@ -61,12 +55,17 @@ proyecto, esto queda huérfano si no se borra a mano:
 ## Ya presente en el sistema, no instalado por el proyecto
 
 Por las dudas, para no confundir con lo de arriba: `wl-paste`, `xclip` y
-`notify-send` (usados por `leer_terminal` y `Plataforma.notificar`) ya
+`notify-send` (usados por `read_terminal` y `Platform.notify`) ya
 venían con el escritorio GNOME/Wayland de esta máquina — no se instalaron
 para Tero.
 
-Lo mismo con `wpctl` (WirePlumber) y `pw-dump` (PipeWire): vienen con el
-stack de audio del sistema. `wpctl` lo usa `ajustar_volumen` sobre el sink
-por defecto, y los dos juntos los usa el ducking de música
-(`herramientas/_ducking.py`) para bajarle el volumen al stream de Spotify
-sin tocar el sink que usa el TTS para salir.
+Lo mismo con `wpctl` (WirePlumber): viene con el stack de audio del
+sistema. Lo usan `set_volume` y el ducking de música
+(`tools/_ducking.py`), los dos sobre el sink por defecto
+(`@DEFAULT_AUDIO_SINK@`). El ducking baja el maestro **solo mientras la
+tecla está apretada** (la ventana en que el micrófono está abierto) y lo
+devuelve al soltarla: nunca se solapa con la voz de Tero, que sale por
+ese mismo sink. El diseño anterior bajaba el stream de Spotify por
+separado y necesitaba además `pw-dump` para encontrarlo; se descartó el
+2026-09-14 (el motivo está al principio de `tools/_ducking.py`) y
+`pw-dump` ya no se usa.

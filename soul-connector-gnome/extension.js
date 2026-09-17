@@ -1,475 +1,540 @@
-// El soul-connector de Tero como extensión de GNOME Shell.
+// Tero's soul-connector as a GNOME Shell extension.
 //
-// Por qué existe: el soul-connector original (soul_connector/, pywebview +
-// QtWebEngine) se
-// lleva ~1,3 GB de RAM para dibujar una onda, porque levanta un Chromium
-// entero. Acá el dibujo corre adentro de gnome-shell, que ya está en
-// memoria, así que el costo extra es esencialmente el de los dos senos
-// que se calculan por frame.
+// Why it exists: the original soul-connector (soul_connector/, pywebview +
+// QtWebEngine) takes ~1.3 GB of RAM to draw a wave, because it spins up a
+// whole Chromium. Here the drawing runs inside gnome-shell, which is already
+// in memory, so the extra cost is essentially the two sines computed per
+// frame.
 //
-// De yapa resuelve un problema viejo: el "siempre encima" nunca funcionó
-// bien bajo Mutter (ver CLAUDE.md), y el soul-connector de pywebview lo peleaba
-// llamando a wmctrl en un bucle mientras Tero hablaba. Siendo parte del
-// shell no hay nada que pelear: el actor vive en la capa de chrome, por
-// encima de las ventanas, siempre.
+// As a bonus it solves an old problem: "always on top" never worked properly
+// under Mutter (see CLAUDE.md), and the pywebview soul-connector fought it by
+// calling wmctrl in a loop while Tero spoke. Being part of the shell there is
+// nothing to fight: the actor lives in the chrome layer, above the windows,
+// always.
 //
-// No toca el daemon: es otro cliente más del WebSocket de niveles.
+// It does not touch the daemon: it is just one more client of the level
+// WebSocket.
 
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {Onda, COLORES_ORIGINALES, lineaBase} from './onda.js';
-import {Barra} from './barra.js';
-import {Particulas} from './particulas.js';
-import {Arrastre, leerPosicion} from './mover.js';
-import {Enlace} from './enlace.js';
+import {Wave, ORIGINAL_COLORS, baseline} from './wave.js';
+import {Bar} from './bar.js';
+import {Particles} from './particles.js';
+import {Drag, readPosition} from './move.js';
+import {Link} from './link.js';
 import {TeroIndicator} from './panel.js';
-import {Puente} from './puente.js';
 
-const ANCHO = 260;
-const ALTO = 74;
-const MARGEN = 20;
+const WIDTH = 260;
+const HEIGHT = 74;
+const MARGIN = 20;
 
-// La barra en sí es de 1px, pero el glow y el puntito de la punta se
-// salen bastante: sin este alto el dibujo queda recortado.
-const ALTO_BARRA = 20;
+// D-Bus so tools/move_window.py can move any window (X11 or native Wayland)
+// without going through wmctrl, which can only touch X11/XWayland windows
+// from outside the compositor. In here Meta.Window.move_to_monitor() has no
+// such limitation -- see [[proyecto-mover-ventana-monitor]] in the project
+// memory, validated live in the nested shell on 2026-09-15 before adding it
+// here.
+const _WINDOWS_IFACE = `
+<node>
+  <interface name="org.gnome.Shell.Extensions.Tero">
+    <method name="ListWindows">
+      <arg type="s" direction="out" name="json" />
+    </method>
+    <method name="MoveWindowToMonitor">
+      <arg type="s" direction="in" name="app" />
+      <arg type="i" direction="in" name="monitor" />
+      <arg type="s" direction="out" name="result" />
+    </method>
+  </interface>
+</node>`;
 
-// Medido con el DOM sobre soul_connector/index.html, que es el original: en un
-// cuadro de 260x74 los tiempos ocupan y 23,5-33,5, la línea de la barra
-// va en y=34 (o sea apoyada sobre el eje de la onda, por eso se ven como
-// una sola línea) y el nombre de la canción en y 39-51.
-const Y_CANCION = 39;
+// The bar itself is 1px, but the glow and the dot at the tip spill out quite
+// a bit: without this height the drawing gets clipped.
+const BAR_HEIGHT = 20;
+
+// Measured with the DOM over soul_connector/index.html, which is the
+// original: in a 260x74 box the times take y 23.5-33.5, the bar line goes at
+// y=34 (i.e. resting on the wave axis, which is why they read as a single
+// line) and the song name at y 39-51.
+const SONG_Y = 39;
 
 const FPS = 60;
-const FPS_IDLE = 30; // en reposo la onda apenas respira: no hace falta más
+const IDLE_FPS = 30; // at rest the wave barely breathes: no need for more
 
-// Mismos colores y constantes que soul_connector/index.html, para que el look no
-// cambie al migrar.
-const COLORES = {
+// The same colors and constants as soul_connector/index.html, so the look
+// does not change when migrating.
+const COLORS = {
     idle: [0x4a, 0x44, 0x58],
-    escuchando: [0xff, 0xff, 0xff],
-    pensando: [0xc7, 0x7d, 0xff],
-    hablando: null, // multicolor original de la librería
-    musica: [0x5c, 0xff, 0xd4],
-    // Cuando Tero delega en Codex/ChatGPT (fase 4): la onda queda cian y
-    // suben partículas de colores desde su eje, como pidió el usuario
-    // ("que dé la idea de asteroides") -- ver particulas.js.
+    listening: [0xff, 0xff, 0xff],
+    thinking: [0xc7, 0x7d, 0xff],
+    speaking: null, // the library's original multicolor
+    music: [0x5c, 0xff, 0xd4],
+    // When Tero delegates to Codex/ChatGPT (phase 4): the wave turns cyan and
+    // colored particles rise from its axis, as the user asked ("que dé la
+    // idea de asteroides") -- see particles.js.
     codex: [0x00, 0xea, 0xff],
 };
 
-const AMPLITUD_IDLE = 0.15;
-const AMPLITUD_PENSANDO = 0.45;
-const AMPLITUD_CODEX = 0.55;
+const IDLE_AMPLITUDE = 0.15;
+const THINKING_AMPLITUDE = 0.45;
+const CODEX_AMPLITUDE = 0.55;
 
-// Suavizado asimétrico: ataque rápido, decaimiento más lento. El RMS crudo
-// tiembla, y esto es lo que separa "se ve pro" de "se ve amateur".
-const ATAQUE = 0.7;
-const DECAIMIENTO = 0.25;
+// Asymmetric smoothing: fast attack, slower decay. Raw RMS jitters, and this
+// is what separates "looks pro" from "looks amateur".
+const ATTACK = 0.7;
+const DECAY = 0.25;
 
-const SEGUIR_NIVEL = ['hablando', 'musica', 'escuchando'];
-const OCULTAR_PAUSADO_MS = 30000;
+const FOLLOW_LEVEL = ['speaking', 'music', 'listening'];
+const HIDE_PAUSED_MS = 30000;
 
-function formatearTiempo(ms) {
-    const totalSeg = Math.max(0, Math.floor(ms / 1000));
-    const min = Math.floor(totalSeg / 60);
-    const seg = totalSeg % 60;
-    return `${min}:${seg.toString().padStart(2, '0')}`;
+function formatTime(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 class SoulConnector {
     constructor() {
-        this._estado = 'idle';
-        this._nivelCrudo = 0;
-        this._nivelSuave = AMPLITUD_IDLE;
-        this._velocidad = 0.06;
-        this._onda = new Onda();
-        this._barra = new Barra();
-        this._particulas = new Particulas();
+        this._state = 'idle';
+        this._rawLevel = 0;
+        this._smoothLevel = IDLE_AMPLITUDE;
+        this._speed = 0.06;
+        this._wave = new Wave();
+        this._bar = new Bar();
+        this._particles = new Particles();
 
-        this._cancion = null;
-        this._fraccion = 0;
-        this._progresoBase = 0;
-        this._duracionMs = 0;
-        this._recibidoEn = 0;
-        this._pausadoDesde = 0;
+        this._song = null;
+        this._fraction = 0;
+        this._baseProgress = 0;
+        this._durationMs = 0;
+        this._receivedAt = 0;
+        this._pausedSince = 0;
 
-        // null = todavía no se sabe (recién habilitada): así no aparece un
-        // "Tero apagado" fugaz mientras se hace el primer intento.
-        this._conectado = null;
-        this._carga = null;
+        // null = not known yet (just enabled): that way no fleeting "Tero
+        // apagado" shows up while the first attempt is made.
+        this._connected = null;
+        this._loading = null;
 
-        this._construirActores();
-        this._idAnimacion = 0;
-        this._fpsActual = 0;
-        this._animar(FPS_IDLE);
+        this._buildActors();
+        this._animationId = 0;
+        this._currentFps = 0;
+        this._animate(IDLE_FPS);
 
-        this._enlace = new Enlace(m => this._alRecibir(m), c => this._alCambiarConexion(c));
-        this._enlace.conectar();
+        this._link = new Link(m => this._onMessage(m), c => this._onConnectionChanged(c));
+        this._link.connect();
     }
 
-    _construirActores() {
-        this._raiz = new St.Widget({
-            width: ANCHO,
-            height: ALTO,
+    _buildActors() {
+        this._root = new St.Widget({
+            width: WIDTH,
+            height: HEIGHT,
             reactive: false,
             layout_manager: new Clutter.FixedLayout(),
         });
 
-        this._area = new St.DrawingArea({width: ANCHO, height: ALTO});
-        this._area.connect('repaint', a => this._pintar(a));
-        this._raiz.add_child(this._area);
+        this._area = new St.DrawingArea({width: WIDTH, height: HEIGHT});
+        this._area.connect('repaint', a => this._paint(a));
+        this._root.add_child(this._area);
 
-        // Dos capas para las partículas del estado "codex", no una: el
-        // halo sale de aplicarle un blur real (GPU, Shell.BlurEffect --
-        // lo mismo que usa gnome-shell para el fondo del overview) a
-        // TODA esta capa, y el núcleo nítido va aparte, sin blur, encima
-        // -- igual que hace `box-shadow` en CSS (sombra desenfocada
-        // detrás, elemento nítido delante). Iba a aproximar el blur a
-        // mano con Cairo (gradiente, anillos) y las dos veces se veía a
-        // esfera con sombreado -- ver particulas.js.
-        this._areaGlow = new St.DrawingArea({width: ANCHO, height: ALTO});
-        this._areaGlow.connect('repaint', a => this._pintarParticulasGlow(a));
-        // Radio más chico que el primer intento (10): un blur ancho sobre
-        // un puntito de 2-3px diluye demasiado el brillo (probado en
-        // vivo, casi no se veía). Con esto el halo queda más concentrado.
-        this._efectoBlur = new Shell.BlurEffect({
+        // Two layers for the "codex" particles, not one: the halo comes from
+        // applying a real blur (GPU, Shell.BlurEffect -- the same one
+        // gnome-shell uses for the overview background) to THIS WHOLE layer,
+        // and the crisp core goes separately, without blur, on top -- just
+        // like `box-shadow` does in CSS (blurred shadow behind, crisp element
+        // in front). Approximating the blur by hand with Cairo (gradient,
+        // rings) was tried and both times it looked like a shaded sphere --
+        // see particles.js.
+        this._glowArea = new St.DrawingArea({width: WIDTH, height: HEIGHT});
+        this._glowArea.connect('repaint', a => this._paintParticleGlow(a));
+        // A smaller radius than the first attempt (10): a wide blur over a
+        // 2-3px dot dilutes the brightness too much (tested live, it was
+        // barely visible). With this the halo stays more concentrated.
+        this._blurEffect = new Shell.BlurEffect({
             radius: 6, brightness: 1.0, mode: Shell.BlurMode.ACTOR,
         });
-        this._areaGlow.add_effect(this._efectoBlur);
-        this._raiz.add_child(this._areaGlow);
+        this._glowArea.add_effect(this._blurEffect);
+        this._root.add_child(this._glowArea);
 
-        this._areaParticulasNucleo = new St.DrawingArea({width: ANCHO, height: ALTO});
-        this._areaParticulasNucleo.connect('repaint', a => this._pintarParticulasNucleo(a));
-        this._raiz.add_child(this._areaParticulasNucleo);
+        this._particleCoreArea = new St.DrawingArea({width: WIDTH, height: HEIGHT});
+        this._particleCoreArea.connect('repaint', a => this._paintParticleCores(a));
+        this._root.add_child(this._particleCoreArea);
 
-        this._etiquetaCancion = new St.Label({
-            style_class: 'tero-soul-connector-cancion',
+        this._songLabel = new St.Label({
+            style_class: 'tero-soul-connector-song',
             x_align: Clutter.ActorAlign.CENTER,
         });
-        this._etiquetaCancion.clutter_text.set_line_wrap(false);
-        this._etiquetaCancion.clutter_text.set_ellipsize(3 /* END */);
-        this._etiquetaCancion.set_position(10, Y_CANCION);
-        this._etiquetaCancion.set_width(ANCHO - 20);
-        this._etiquetaCancion.opacity = 0;
-        this._raiz.add_child(this._etiquetaCancion);
+        this._songLabel.clutter_text.set_line_wrap(false);
+        this._songLabel.clutter_text.set_ellipsize(3 /* END */);
+        this._songLabel.set_position(10, SONG_Y);
+        this._songLabel.set_width(WIDTH - 20);
+        this._songLabel.opacity = 0;
+        this._root.add_child(this._songLabel);
 
-        // Mismo lugar que el nombre de la canción: mientras Tero arranca o
-        // está apagado no hay canción que mostrar, así que no compiten.
-        this._etiquetaAviso = new St.Label({
-            style_class: 'tero-soul-connector-aviso',
+        // The same place as the song name: while Tero is starting up or is off
+        // there is no song to show, so they do not compete.
+        this._noticeLabel = new St.Label({
+            style_class: 'tero-soul-connector-notice',
             x_align: Clutter.ActorAlign.CENTER,
         });
-        this._etiquetaAviso.clutter_text.set_ellipsize(3 /* END */);
-        this._etiquetaAviso.set_position(10, Y_CANCION);
-        this._etiquetaAviso.set_width(ANCHO - 20);
-        this._etiquetaAviso.opacity = 0;
-        this._raiz.add_child(this._etiquetaAviso);
+        this._noticeLabel.clutter_text.set_ellipsize(3 /* END */);
+        this._noticeLabel.set_position(10, SONG_Y);
+        this._noticeLabel.set_width(WIDTH - 20);
+        this._noticeLabel.opacity = 0;
+        this._root.add_child(this._noticeLabel);
 
-        this._filaProgreso = new St.BoxLayout({
-            style_class: 'tero-soul-connector-progreso',
-            width: ANCHO - 20,
+        this._progressRow = new St.BoxLayout({
+            style_class: 'tero-soul-connector-progress',
+            width: WIDTH - 20,
         });
-        // La fila se centra sobre el eje de la onda, de modo que la línea
-        // de la barra caiga exactamente encima del hilo que dibuja la
-        // onda y las dos se lean como una sola. Los tiempos quedan
-        // apoyados justo arriba de esa línea, como en el original.
-        this._filaProgreso.set_position(
-            10, Math.round(lineaBase(ALTO) - ALTO_BARRA / 2));
-        this._filaProgreso.opacity = 0;
+        // The row is centered on the wave axis, so that the bar line falls
+        // exactly on top of the thread the wave draws and the two read as a
+        // single one. The times end up resting just above that line, as in the
+        // original.
+        this._progressRow.set_position(
+            10, Math.round(baseline(HEIGHT) - BAR_HEIGHT / 2));
+        this._progressRow.opacity = 0;
 
-        this._tiempoActual = new St.Label({style_class: 'tero-soul-connector-tiempo'});
-        this._pista = new St.DrawingArea({
-            height: ALTO_BARRA,
+        this._currentTime = new St.Label({style_class: 'tero-soul-connector-time'});
+        this._track = new St.DrawingArea({
+            height: BAR_HEIGHT,
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._pista.connect('repaint', a => this._pintarBarra(a));
-        this._tiempoTotal = new St.Label({style_class: 'tero-soul-connector-tiempo'});
+        this._track.connect('repaint', a => this._paintBar(a));
+        this._totalTime = new St.Label({style_class: 'tero-soul-connector-time'});
 
-        this._filaProgreso.add_child(this._tiempoActual);
-        this._filaProgreso.add_child(this._pista);
-        this._filaProgreso.add_child(this._tiempoTotal);
-        this._raiz.add_child(this._filaProgreso);
+        this._progressRow.add_child(this._currentTime);
+        this._progressRow.add_child(this._track);
+        this._progressRow.add_child(this._totalTime);
+        this._root.add_child(this._progressRow);
     }
 
     get actor() {
-        return this._raiz;
+        return this._root;
     }
 
-    _colores() {
-        const color = COLORES[this._estado];
+    _colors() {
+        const color = COLORS[this._state];
         if (color === null || color === undefined)
-            return COLORES_ORIGINALES;
+            return ORIGINAL_COLORS;
         return [color, color, color];
     }
 
-    _pintar(area) {
+    _paint(area) {
         const cr = area.get_context();
-        const [ancho, alto] = area.get_surface_size();
-        this._onda.dibujar(cr, ancho, alto, this._nivelSuave, this._velocidad,
-            this._colores());
+        const [width, height] = area.get_surface_size();
+        this._wave.draw(cr, width, height, this._smoothLevel, this._speed,
+            this._colors());
         cr.$dispose();
     }
 
-    _pintarParticulasGlow(area) {
+    _paintParticleGlow(area) {
         const cr = area.get_context();
-        const [, alto] = area.get_surface_size();
-        this._particulas.dibujarGlow(cr, lineaBase(alto));
+        const [, height] = area.get_surface_size();
+        this._particles.drawGlow(cr, baseline(height));
         cr.$dispose();
     }
 
-    _pintarParticulasNucleo(area) {
+    _paintParticleCores(area) {
         const cr = area.get_context();
-        const [, alto] = area.get_surface_size();
-        this._particulas.dibujarNucleos(cr, lineaBase(alto));
+        const [, height] = area.get_surface_size();
+        this._particles.drawCores(cr, baseline(height));
         cr.$dispose();
     }
 
-    _pintarBarra(area) {
+    _paintBar(area) {
         const cr = area.get_context();
-        const [ancho, alto] = area.get_surface_size();
-        const pausado = !this._cancion || !this._cancion.reproduciendo;
-        // La fila está centrada sobre el eje de la onda, así que el
-        // centro de esta área ya *es* la altura de la línea.
-        this._barra.dibujar(cr, ancho, alto / 2, this._fraccion, pausado);
+        const [width, height] = area.get_surface_size();
+        const paused = !this._song || !this._song.playing;
+        // The row is centered on the wave axis, so the center of this area
+        // already *is* the height of the line.
+        this._bar.draw(cr, width, height / 2, this._fraction, paused);
         cr.$dispose();
     }
 
-    _amplitudObjetivo() {
-        if (SEGUIR_NIVEL.includes(this._estado))
-            return this._nivelCrudo;
-        if (this._estado === 'pensando')
-            return AMPLITUD_PENSANDO;
-        if (this._estado === 'codex')
-            return AMPLITUD_CODEX;
-        return AMPLITUD_IDLE;
+    _targetAmplitude() {
+        if (FOLLOW_LEVEL.includes(this._state))
+            return this._rawLevel;
+        if (this._state === 'thinking')
+            return THINKING_AMPLITUDE;
+        if (this._state === 'codex')
+            return CODEX_AMPLITUDE;
+        return IDLE_AMPLITUDE;
     }
 
-    _animar(fps) {
-        if (this._idAnimacion)
-            GLib.Source.remove(this._idAnimacion);
-        this._fpsActual = fps;
-        this._idAnimacion = GLib.timeout_add(
+    _animate(fps) {
+        if (this._animationId)
+            GLib.Source.remove(this._animationId);
+        this._currentFps = fps;
+        this._animationId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, Math.round(1000 / fps), () => this._frame());
     }
 
     _frame() {
-        const objetivo = this._amplitudObjetivo();
-        const tasa = objetivo > this._nivelSuave ? ATAQUE : DECAIMIENTO;
-        this._nivelSuave += (objetivo - this._nivelSuave) * tasa;
+        const target = this._targetAmplitude();
+        const rate = target > this._smoothLevel ? ATTACK : DECAY;
+        this._smoothLevel += (target - this._smoothLevel) * rate;
 
-        // La velocidad también sigue al nivel: una onda que se mueve
-        // siempre igual sin importar qué tan fuerte suena la voz es
-        // justo lo que se ve desacoplado del audio.
-        if (SEGUIR_NIVEL.includes(this._estado))
-            this._velocidad = 0.04 + this._nivelSuave * 0.18;
-        else if (this._estado === 'pensando')
-            this._velocidad = 0.12;
-        else if (this._estado === 'codex')
-            this._velocidad = 0.16; // más viva que "pensando": es el estado "energizado"
+        // The speed follows the level too: a wave that always moves the same
+        // regardless of how loud the voice is, is exactly what looks decoupled
+        // from the audio.
+        if (FOLLOW_LEVEL.includes(this._state))
+            this._speed = 0.04 + this._smoothLevel * 0.18;
+        else if (this._state === 'thinking')
+            this._speed = 0.12;
+        else if (this._state === 'codex')
+            this._speed = 0.16; // livelier than "thinking": it is the "energized" state
         else
-            this._velocidad = 0.06;
+            this._speed = 0.06;
 
         this._area.queue_repaint();
-        // Una sola vez acá, no adentro de cada _pintarParticulas*: las dos
-        // capas tienen que pintar la MISMA lista de partículas en el
-        // mismo estado, no cada una la suya (ver particulas.js).
-        this._particulas.actualizar(this._estado === 'codex', ANCHO);
-        this._areaGlow.queue_repaint();
-        this._areaParticulasNucleo.queue_repaint();
-        this._actualizarProgreso();
+        // Once here, not inside each _paintParticle*: both layers have to
+        // paint the SAME list of particles in the same state, not each one its
+        // own (see particles.js).
+        this._particles.update(this._state === 'codex', WIDTH);
+        this._glowArea.queue_repaint();
+        this._particleCoreArea.queue_repaint();
+        this._updateProgress();
         return GLib.SOURCE_CONTINUE;
     }
 
-    _alCambiarConexion(conectado) {
-        this._conectado = conectado;
-        if (!conectado) {
-            // Lo último que mandó el daemon ya no vale: sin esto la onda
-            // quedaba congelada en "hablando" o con la canción de antes.
-            this._carga = null;
-            this._nivelCrudo = 0;
-            this._aplicarEstado('idle');
-            this._aplicarCancion(null);
+    _onConnectionChanged(connected) {
+        this._connected = connected;
+        if (!connected) {
+            // Whatever the daemon last sent is no longer valid: without this
+            // the wave stayed frozen on "speaking" or with the previous song.
+            this._loading = null;
+            this._rawLevel = 0;
+            this._applyState('idle');
+            this._applySong(null);
         }
-        this._actualizarAviso();
+        this._updateNotice();
     }
 
-    _actualizarAviso() {
-        let texto = null;
-        if (this._conectado === false)
-            texto = 'Tero apagado';
-        else if (this._carga)
-            texto = `${this._carga.texto} · ${Math.round(this._carga.progreso * 100)}%`;
+    _updateNotice() {
+        let text = null;
+        if (this._connected === false)
+            text = 'Tero apagado';
+        else if (this._loading)
+            text = `${this._loading.text} · ${Math.round(this._loading.progress * 100)}%`;
 
-        if (texto) {
-            this._etiquetaAviso.text = texto;
-            this._etiquetaAviso.ease({opacity: 255, duration: 400});
+        if (text) {
+            this._noticeLabel.text = text;
+            this._noticeLabel.ease({opacity: 255, duration: 400});
         } else {
-            this._etiquetaAviso.ease({opacity: 0, duration: 400});
+            this._noticeLabel.ease({opacity: 0, duration: 400});
         }
     }
 
-    _alRecibir(mensaje) {
-        if (mensaje.carga !== undefined) {
-            this._carga = mensaje.carga;
-            this._actualizarAviso();
+    _onMessage(message) {
+        if (message.loading !== undefined) {
+            this._loading = message.loading;
+            this._updateNotice();
         }
-        if (mensaje.estado !== undefined)
-            this._aplicarEstado(mensaje.estado);
-        if (mensaje.nivel !== undefined)
-            this._nivelCrudo = mensaje.nivel;
-        if (mensaje.cancion !== undefined)
-            this._aplicarCancion(mensaje.cancion);
+        if (message.state !== undefined)
+            this._applyState(message.state);
+        if (message.level !== undefined)
+            this._rawLevel = message.level;
+        if (message.song !== undefined)
+            this._applySong(message.song);
     }
 
-    _aplicarEstado(nuevo) {
-        this._estado = nuevo;
-        // A 30 fps el reposo se ve igual y le ahorra la mitad de los
-        // frames a gnome-shell, que es el proceso que dibuja todo el
-        // escritorio -- acá el costo no lo paga un proceso aparte.
-        const fps = nuevo === 'idle' ? FPS_IDLE : FPS;
-        if (fps !== this._fpsActual)
-            this._animar(fps);
+    _applyState(next) {
+        this._state = next;
+        // At 30 fps the resting state looks the same and saves gnome-shell
+        // half the frames, and gnome-shell is the process that draws the whole
+        // desktop -- here the cost is not paid by a separate process.
+        const fps = next === 'idle' ? IDLE_FPS : FPS;
+        if (fps !== this._currentFps)
+            this._animate(fps);
     }
 
-    _aplicarCancion(info) {
-        this._cancion = info;
+    _applySong(info) {
+        this._song = info;
         if (!info) {
-            this._etiquetaCancion.ease({opacity: 0, duration: 600});
-            this._filaProgreso.ease({opacity: 0, duration: 600});
+            this._songLabel.ease({opacity: 0, duration: 600});
+            this._progressRow.ease({opacity: 0, duration: 600});
             return;
         }
-        this._etiquetaCancion.text = info.texto;
-        this._progresoBase = info.progreso_ms;
-        this._duracionMs = info.duracion_ms;
-        this._recibidoEn = GLib.get_monotonic_time() / 1000;
-        this._etiquetaCancion.ease({opacity: 180, duration: 600});
-        // Sin duración real (un canal de YouTube en vivo, no una canción
-        // con punta y final) se oculta la fila de tiempo/barra -- mostrarla
-        // fija en 0:00/0:00 se ve roto, no "en vivo".
-        this._filaProgreso.ease({opacity: info.duracion_ms ? 255 : 0, duration: 600});
+        this._songLabel.text = info.text;
+        this._baseProgress = info.progress_ms;
+        this._durationMs = info.duration_ms;
+        this._receivedAt = GLib.get_monotonic_time() / 1000;
+        this._songLabel.ease({opacity: 180, duration: 600});
+        // With no real duration (a live YouTube channel, not a song with a
+        // start and an end) the time/bar row is hidden -- showing it stuck at
+        // 0:00/0:00 looks broken, not "live".
+        this._progressRow.ease({opacity: info.duration_ms ? 255 : 0, duration: 600});
     }
 
-    _actualizarProgreso() {
-        if (!this._cancion || !this._duracionMs)
+    _updateProgress() {
+        if (!this._song || !this._durationMs)
             return;
-        const pausado = !this._cancion.reproduciendo;
-        const transcurrido = pausado
+        const paused = !this._song.playing;
+        const elapsed = paused
             ? 0
-            : GLib.get_monotonic_time() / 1000 - this._recibidoEn;
-        const progreso = Math.min(this._duracionMs, this._progresoBase + transcurrido);
-        this._tiempoActual.text = formatearTiempo(progreso);
-        this._tiempoTotal.text = formatearTiempo(this._duracionMs);
-        this._fraccion = progreso / this._duracionMs;
-        // Siempre, no solo cuando cambia la fracción: el glow cicla color,
-        // el brillo respira y en pausa el puntito late. Todo eso se mueve
-        // aunque la canción esté clavada en el mismo segundo.
-        this._pista.queue_repaint();
+            : GLib.get_monotonic_time() / 1000 - this._receivedAt;
+        const progress = Math.min(this._durationMs, this._baseProgress + elapsed);
+        this._currentTime.text = formatTime(progress);
+        this._totalTime.text = formatTime(this._durationMs);
+        this._fraction = progress / this._durationMs;
+        // Always, not only when the fraction changes: the glow cycles color,
+        // the brightness breathes and while paused the dot beats. All of that
+        // moves even if the song is stuck on the same second.
+        this._track.queue_repaint();
     }
 
-    destruir() {
-        if (this._idAnimacion) {
-            GLib.Source.remove(this._idAnimacion);
-            this._idAnimacion = 0;
+    destroy() {
+        if (this._animationId) {
+            GLib.Source.remove(this._animationId);
+            this._animationId = 0;
         }
-        this._enlace.destruir();
-        this._raiz.destroy();
+        this._link.destroy();
+        this._root.destroy();
     }
 }
 
 export default class SoulConnectorExtension extends Extension {
     enable() {
         this._soulConnector = new SoulConnector();
-        // addChrome (y no un actor suelto en uiGroup) es lo que lo pone en
-        // la capa de chrome: por encima de las ventanas y bien tratado al
-        // entrar y salir de pantalla completa.
+        // addChrome (and not a loose actor in uiGroup) is what puts it in the
+        // chrome layer: above the windows and handled properly when entering
+        // and leaving fullscreen.
         //
-        // Ojo: el viejo parámetro `affectsInputRegion: false` ya no existe
-        // en GNOME 50 (tira "Unrecognized parameter" y la extensión no
-        // carga). Que los clics pasen de largo ahora sale de que el actor
-        // es `reactive: false`, que es como se construye en SoulConnector.
+        // Careful: the old `affectsInputRegion: false` parameter no longer
+        // exists in GNOME 50 (it throws "Unrecognized parameter" and the
+        // extension does not load). Clicks passing through now comes from the
+        // actor being `reactive: false`, which is how it is built in
+        // SoulConnector.
         Main.layoutManager.addChrome(this._soulConnector.actor, {
             trackFullscreen: true,
         });
-        this._posicion = leerPosicion();
-        this._ubicar();
-        this._arrastre = new Arrastre(this._soulConnector.actor, (x, y) => {
-            this._posicion = {x, y};
+        this._position = readPosition();
+        this._place();
+        this._drag = new Drag(this._soulConnector.actor, (x, y) => {
+            this._position = {x, y};
         });
-        this._idMonitores = Main.layoutManager.connect(
-            'monitors-changed', () => this._ubicar());
-        // Y este es el que importa de verdad. En el login la extensión
-        // puede habilitarse ANTES de que el dock reserve su franja: ahí
-        // el work area todavía es el monitor entero, el soul-connector se
-        // ubica abajo de todo y queda tapado para siempre, porque
-        // `monitors-changed` no se dispara por eso. `workareas-changed`
-        // sí, así que el soul-connector se reacomoda solo cuando el dock aparece,
-        // se va, cambia de lado o cambia de tamaño.
-        this._idAreas = global.display.connect(
-            'workareas-changed', () => this._ubicar());
+        this._monitorsId = Main.layoutManager.connect(
+            'monitors-changed', () => this._place());
+        // And this is the one that really matters. At login the extension can
+        // be enabled BEFORE the dock reserves its strip: at that point the
+        // work area is still the whole monitor, the soul-connector is placed
+        // at the very bottom and stays covered forever, because
+        // `monitors-changed` does not fire for that. `workareas-changed` does,
+        // so the soul-connector rearranges itself when the dock appears, goes
+        // away, changes side or changes size.
+        this._areasId = global.display.connect(
+            'workareas-changed', () => this._place());
 
         this._panel = new TeroIndicator();
-        this._puente = new Puente();
+
+        this._windowsDbus = Gio.DBusExportedObject.wrapJSObject(_WINDOWS_IFACE, this);
+        this._windowsDbus.export(
+            Gio.DBus.session, '/org/gnome/Shell/Extensions/Tero');
     }
 
-    _ubicar() {
+    // wm_class first: the title changes with every open tab/document (the same
+    // reason _youtube_screen.py identifies its window by PID and not by
+    // title). If nothing matches by wm_class it falls back to searching the
+    // title, for apps without a useful wm_class.
+    _findWindow(app) {
+        const wanted = app.toLowerCase();
+        const windows = global.get_window_actors().map(w => w.meta_window);
+        return windows.find(w => (w.get_wm_class() || '').toLowerCase().includes(wanted))
+            || windows.find(w => (w.get_title() || '').toLowerCase().includes(wanted));
+    }
+
+    ListWindows() {
+        const windows = global.get_window_actors().map(w => ({
+            title: w.meta_window.get_title(),
+            wm_class: w.meta_window.get_wm_class(),
+            monitor: w.meta_window.get_monitor(),
+        }));
+        return JSON.stringify(windows);
+    }
+
+    // The error strings are the wire protocol with tools/move_window.py, which
+    // matches on them to build its spoken answer: changing one side means
+    // changing the other.
+    MoveWindowToMonitor(app, monitor) {
+        const count = Main.layoutManager.monitors.length;
+        if (monitor < 0 || monitor >= count) {
+            return JSON.stringify({
+                ok: false, error: `no monitor ${monitor} (there are ${count})`,
+            });
+        }
+        const win = this._findWindow(app);
+        if (!win)
+            return JSON.stringify({ok: false, error: 'window not found'});
+
+        win.move_to_monitor(monitor);
+        return JSON.stringify({
+            ok: true, title: win.get_title(), monitor,
+        });
+    }
+
+    _place() {
         const monitor = Main.layoutManager.primaryMonitor;
         if (!monitor || !this._soulConnector)
             return;
-        // Nunca el rectángulo crudo del monitor: si hay un dock (Ubuntu
-        // dock, dash-to-dock) reservando franja, el rectángulo del work
-        // area ya viene descontado -- así el soul-connector queda arriba del dock
-        // en vez de superpuesta y tapada por él (pasó de verdad: con
-        // dock abajo, el nombre de la canción quedaba atrás del dock).
+        // Never the raw monitor rectangle: if there is a dock (Ubuntu dock,
+        // dash-to-dock) reserving a strip, the work area rectangle already has
+        // it subtracted -- that way the soul-connector sits above the dock
+        // instead of overlapping and covered by it (actually happened: with the
+        // dock at the bottom, the song name ended up behind the dock).
         const area = Main.layoutManager.getWorkAreaForMonitor(monitor.index);
         const base = area || monitor;
 
-        // Si el usuario lo movió a mano, mandar esa posición -- pero
-        // igual recortada al work area, para que un dock que aparece o un
-        // monitor que se desconecta no la dejen fuera de la pantalla, sin
-        // forma de agarrarla para traerla de vuelta.
-        if (this._posicion) {
+        // If the user moved it by hand, honor that position -- but still
+        // clamped to the work area, so a dock that appears or a monitor that
+        // gets disconnected does not leave it off screen, with no way to grab
+        // it and bring it back.
+        if (this._position) {
             this._soulConnector.actor.set_position(
-                Math.max(base.x, Math.min(this._posicion.x, base.x + base.width - ANCHO)),
-                Math.max(base.y, Math.min(this._posicion.y, base.y + base.height - ALTO))
+                Math.max(base.x, Math.min(this._position.x, base.x + base.width - WIDTH)),
+                Math.max(base.y, Math.min(this._position.y, base.y + base.height - HEIGHT))
             );
             return;
         }
 
         this._soulConnector.actor.set_position(
-            base.x + base.width - ANCHO - MARGEN,
-            base.y + base.height - ALTO - MARGEN
+            base.x + base.width - WIDTH - MARGIN,
+            base.y + base.height - HEIGHT - MARGIN
         );
     }
 
     disable() {
-        if (this._puente) {
-            this._puente.destruir();
-            this._puente = null;
+        if (this._windowsDbus) {
+            this._windowsDbus.flush();
+            this._windowsDbus.unexport();
+            this._windowsDbus = null;
         }
-        if (this._idMonitores) {
-            Main.layoutManager.disconnect(this._idMonitores);
-            this._idMonitores = 0;
+        if (this._monitorsId) {
+            Main.layoutManager.disconnect(this._monitorsId);
+            this._monitorsId = 0;
         }
-        if (this._idAreas) {
-            global.display.disconnect(this._idAreas);
-            this._idAreas = 0;
+        if (this._areasId) {
+            global.display.disconnect(this._areasId);
+            this._areasId = 0;
         }
-        if (this._arrastre) {
-            this._arrastre.destruir();
-            this._arrastre = null;
+        if (this._drag) {
+            this._drag.destroy();
+            this._drag = null;
         }
         if (this._soulConnector) {
             Main.layoutManager.removeChrome(this._soulConnector.actor);
-            this._soulConnector.destruir();
+            this._soulConnector.destroy();
             this._soulConnector = null;
         }
         if (this._panel) {
-            this._panel.destruir();
+            this._panel.teardown();
             this._panel = null;
         }
     }

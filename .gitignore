@@ -2,8 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 
-# Modelos de voz (binarios pesados, se descargan con piper.download_voices)
-voz/modelos/
+# Voice models (heavy binaries, downloaded with piper.download_voices)
+voice/models/
 
-# Logs del lanzador (./tero)
+# Launcher logs (./tero)
 logs/
+
+# kiro-cli workspace settings
+.kiro/

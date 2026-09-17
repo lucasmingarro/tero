@@ -1,10 +1,15 @@
-"""Servidor WebSocket del soul-connector: difunde estado (idle/escuchando/pensando/
-hablando) y nivel de audio (RMS) a quien esté conectado.
+"""Soul-connector WebSocket server: broadcasts state
+(idle/listening/thinking/speaking) and audio level (RMS) to whoever is
+connected.
 
-El daemon tiene que funcionar sin el soul-connector (ver README de la fase): si no
-hay ningún cliente conectado, o si el servidor ni siquiera pudo arrancar
-(puerto ocupado, etc.), emitir un estado/nivel no hace nada — nunca
-lanza, nunca bloquea el resto de Tero.
+The daemon has to work without the soul-connector (see the phase README):
+if no client is connected, or if the server could not even start (port
+taken, etc.), emitting a state/level does nothing -- it never raises, it
+never blocks the rest of Tero.
+
+The message keys and the state names are the wire protocol with
+soul_connector/index.html and soul-connector-gnome/extension.js: changing
+one side means changing the others.
 """
 
 import asyncio
@@ -13,84 +18,85 @@ import threading
 
 import websockets
 
-PUERTO = 8765
+PORT = 8765
 
 
-class ServidorSoulConnector:
-    def __init__(self, puerto: int = PUERTO):
-        self._puerto = puerto
-        self._clientes: set = set()
-        # El último aviso de carga, para mandárselo a quien se conecte a
-        # mitad de camino: el soul-connector de GNOME arranca con la sesión y se
-        # conecta solo en cualquier momento del arranque del daemon, y sin
-        # esto se quedaba sin saber que Tero todavía estaba cargando.
-        self._carga_actual: dict | None = None
+class SoulConnectorServer:
+    def __init__(self, port: int = PORT):
+        self._port = port
+        self._clients: set = set()
+        # The last loading notice, to send it to whoever connects halfway
+        # through: the GNOME soul-connector starts with the session and
+        # connects on its own at any point during the daemon startup, and
+        # without this it had no way of knowing Tero was still loading.
+        self._current_loading: dict | None = None
         self._loop = asyncio.new_event_loop()
-        self._listo = threading.Event()
-        self._hilo = threading.Thread(target=self._correr, daemon=True)
-        self._hilo.start()
-        self._listo.wait(timeout=3)
+        self._ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready.wait(timeout=3)
 
-    def _correr(self) -> None:
+    def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._servir())
-        self._listo.set()
+        self._loop.run_until_complete(self._serve())
+        self._ready.set()
         self._loop.run_forever()
 
-    async def _servir(self) -> None:
-        async def manejar(ws) -> None:
-            self._clientes.add(ws)
+    async def _serve(self) -> None:
+        async def handle(ws) -> None:
+            self._clients.add(ws)
             print("(soul-connector: cliente conectado)")
-            if self._carga_actual is not None:
+            if self._current_loading is not None:
                 try:
-                    await ws.send(json.dumps({"carga": self._carga_actual}))
+                    await ws.send(json.dumps({"loading": self._current_loading}))
                 except Exception:
                     pass
             try:
                 await ws.wait_closed()
             finally:
-                self._clientes.discard(ws)
+                self._clients.discard(ws)
                 print("(soul-connector: cliente desconectado)")
 
         try:
-            await websockets.serve(manejar, "127.0.0.1", self._puerto)
+            await websockets.serve(handle, "127.0.0.1", self._port)
         except OSError:
-            # Puerto ocupado (ej. otra instancia del daemon corriendo):
-            # el soul-connector simplemente no tiene con quién hablar, no es fatal.
+            # Port taken (e.g. another instance of the daemon running): the
+            # soul-connector simply has nobody to talk to, not fatal.
             pass
 
-    def _difundir(self, mensaje: dict) -> None:
-        if not self._clientes:
+    def _broadcast(self, message: dict) -> None:
+        if not self._clients:
             return
-        datos = json.dumps(mensaje)
+        data = json.dumps(message)
 
-        async def _enviar_a_todos() -> None:
-            muertos = set()
-            for cliente in list(self._clientes):
+        async def _send_to_all() -> None:
+            dead = set()
+            for client in list(self._clients):
                 try:
-                    await cliente.send(datos)
+                    await client.send(data)
                 except Exception:
-                    muertos.add(cliente)
-            self._clientes.difference_update(muertos)
+                    dead.add(client)
+            self._clients.difference_update(dead)
 
-        asyncio.run_coroutine_threadsafe(_enviar_a_todos(), self._loop)
+        asyncio.run_coroutine_threadsafe(_send_to_all(), self._loop)
 
-    def estado(self, nombre: str) -> None:
-        """nombre: 'idle' | 'escuchando' | 'pensando' | 'hablando'."""
-        self._difundir({"estado": nombre})
+    def state(self, name: str) -> None:
+        """name: 'idle' | 'listening' | 'thinking' | 'speaking' | 'music'."""
+        self._broadcast({"state": name})
 
-    def nivel(self, valor: float) -> None:
-        """valor: RMS del audio en reproducción, 0.0-1.0 aproximado."""
-        self._difundir({"nivel": valor})
+    def level(self, value: float) -> None:
+        """value: RMS of the audio being played, roughly 0.0-1.0."""
+        self._broadcast({"level": value})
 
-    def cancion(self, info: dict | None) -> None:
-        """info: {"texto", "progreso_ms", "duracion_ms"} o None si no suena
-        nada. El soul-connector interpola el progreso entre actualizaciones."""
-        self._difundir({"cancion": info})
+    def song(self, info: dict | None) -> None:
+        """info: {"text", "progress_ms", "duration_ms", "playing"} or None if
+        nothing is playing. The soul-connector interpolates the progress
+        between updates."""
+        self._broadcast({"song": info})
 
-    def carga(self, texto: str | None, progreso: float = 0.0) -> None:
-        """Aviso de arranque ("Cargando voz", 0.33), o texto=None cuando ya
-        terminó de cargar. El progreso es por etapas, no una medición: ni
-        faster-whisper ni Piper ni Ollama informan avance mientras cargan."""
-        self._carga_actual = None if texto is None else {"texto": texto, "progreso": progreso}
-        self._difundir({"carga": self._carga_actual})
+    def loading(self, text: str | None, progress: float = 0.0) -> None:
+        """Startup notice ("Cargando voz", 0.33), or text=None once loading
+        is done. The progress is by stage, not a measurement: neither
+        faster-whisper nor Piper nor Ollama report progress while loading."""
+        self._current_loading = None if text is None else {"text": text, "progress": progress}
+        self._broadcast({"loading": self._current_loading})
