@@ -16,6 +16,11 @@ def _ensure_cuda_libs() -> None:
     only read when the process starts. If it is not set, the process
     re-executes itself once with the corrected path (which avoids having to
     export it by hand before every daemon start)."""
+    if sys.platform != "linux":
+        # CUDA (and LD_LIBRARY_PATH itself) is Linux-only here: the nvidia-*
+        # packages are not even installed on other platforms (see the
+        # markers in pyproject.toml), and on macOS CTranslate2 runs on CPU.
+        return
     if os.environ.get("_TERO_CUDA_LIBS_OK"):
         return
     libs = sorted(glob.glob(os.path.join(sysconfig.get_paths()["purelib"], "nvidia", "*", "lib")))
