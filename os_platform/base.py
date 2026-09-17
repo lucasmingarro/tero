@@ -13,6 +13,14 @@ from typing import Callable
 
 
 class Platform(ABC):
+    # Time between steps of the ducking volume ramp (tools/_ducking.py). It
+    # belongs to the platform because how long one volume write takes is a
+    # property of the platform, not of the ramp: on Linux `wpctl` answers in
+    # a couple of milliseconds, on macOS CoreAudio has a median of 4 ms with
+    # occasional spikes of 130-450 ms, and stepping faster than the writes
+    # take only makes the fade choppier.
+    volume_step_s = 0.02
+
     @abstractmethod
     def listen_key(self, on_down: Callable[[], None], on_up: Callable[[], None]) -> None:
         """Starts a background listener for the activation key.

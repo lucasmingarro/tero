@@ -154,10 +154,10 @@ común.
   Linux: correr una sesión real después.
 - **1.4 [M] `os_platform/macos.py`.** `listen_key` con `pynput`
   (`Key.ctrl_r` por defecto; documentar el permiso de Input Monitoring en
-  Ajustes → Privacidad). `notify` con `osascript`. `get/set_master_volume`
-  con `osascript -e 'output volume of (get volume settings)'` / `set
-  volume output volume N` (medir latencia de la rampa; si >30 ms por paso,
-  pasar a CoreAudio con pyobjc). `available_ram_mb` con `psutil`.
+  Ajustes → Privacidad). `notify` con `osascript`. `get/set_master_volume`:
+  medido (ver "Medido en macOS"), `osascript` cuesta ~450 ms por llamada y
+  no sirve para la rampa → quedó CoreAudio por `ctypes`, sin pyobjc, con
+  `Platform.volume_step_s = 0.05`. `available_ram_mb` con `psutil`.
   `gpu_status` → `None`. `open_app("spotify:")` con `open`. `media()` vía
   Spotify Web API (común) con fallback AppleScript.
 - **1.5 [X] `create_platform()`** devuelve `MacOSPlatform` en `darwin`.
@@ -221,6 +221,68 @@ común.
 
 Windows (queda la tabla de diseño, sin implementar), extensión GNOME en
 Mac, `delegate_to_codex` (fase 4 original, independiente de esto).
+
+---
+
+## Medido en macOS
+
+MacBook de Lucas, 2026-09-17, durante la fase 1. Está acá para no volver a
+discutir en tres meses por qué el volumen no usa AppleScript.
+
+### Volumen: por qué CoreAudio y no `osascript`
+
+| Camino | Leer | Escribir |
+|---|---|---|
+| `osascript` (`get volume settings` / `set volume output volume N`) | 400 ms (mediana 326) | 450-500 ms (mediana 493) |
+| CoreAudio por `ctypes` (`volm` scalar) | **0,25 ms** | mediana **3,9 ms**, con picos de 130-450 ms |
+
+Promedios de 20 llamadas, restaurando el volumen original. Desglose de los
+~450 ms de `osascript`: 2,5 ms son el `fork`+`exec`, 43 ms arrancar el
+intérprete de AppleScript, y los ~400 ms restantes la operación de volumen
+en sí (`get volume settings` consulta salida, entrada y alerta juntas).
+
+Por eso **no** alcanzaba con subir `volume_step_s` y seguir con
+`osascript`, como decía el plan original: con la rampa del ducking
+(`_FADE_DOWN_FACTOR = 0.22`, ~13 pasos hasta 0,10) el fade de bajada
+tardaría ~6 s, y la tecla se mantiene apretada 1-2 s. El ducking nunca
+llegaría a hacer nada.
+
+CoreAudio no agrega dependencia: `ctypes` es stdlib y
+`CoreAudio.framework` es del sistema — no hace falta pyobjc, que era el
+plan B anotado. Los picos de 130-450 ms (el sistema persistiendo el
+cambio) se aceptan: la rampa corre en su propio hilo y trabaja sobre su
+propia estimación, así que una escritura lenta alarga esa iteración y nada
+más — no encola escrituras ni acumula pasos atrasados.
+
+Medido con `volume_step_s = 0.05` (contra 0,02 en Linux): 10 pasos de
+rampa tardan 1,11 s, o sea ~111 ms por paso. La bajada completa queda en
+~1,4 s y la subida, que es deliberadamente lenta
+(`_FADE_UP_FACTOR = 0.05`), en ~6 s. Si molesta, el ajuste es
+`_FADE_UP_FACTOR`, no el mecanismo.
+
+Salidas sin control de volumen (HDMI/DisplayPort, algunos AirPlay):
+`master_volume()` devuelve `None`, el `Ducker` sale solo en el bootstrap y
+se loguea una vez, no en cada tecla.
+
+### AppleScript: lo que sí paga la pena
+
+| Operación | Promedio de 10 |
+|---|---|
+| `display notification` (`Platform.notify`) | 128 ms (mediana 123) |
+| `tell application "Spotify" to playpause` (`media`) | 193 ms (mediana 192) |
+
+Son una llamada por turno, no por paso de rampa: entran cómodas en el
+presupuesto y AppleScript es la forma más corta de decirlo.
+
+### Permiso de Monitoreo de entrada
+
+`CGPreflightListenEventAccess()` (CoreGraphics por ctypes) responde si el
+permiso está dado, sin tener que adivinar por "no llegan eventos", y
+`CGRequestListenEventAccess()` hace que macOS muestre el diálogo y liste
+el programa. Ojo con a quién se le da el permiso: macOS lo atribuye al
+proceso responsable, que arrancando con `./tero` es **la terminal**, no el
+`python` del `.venv` (con launchd sí es el python). El mensaje de
+`os_platform/macos.py` dice las dos cosas e imprime la ruta real.
 
 ---
 

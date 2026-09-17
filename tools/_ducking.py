@@ -51,7 +51,9 @@ import time
 from os_platform import get_platform
 
 _DUCKED_VOLUME = 0.10
-_STEP_S = 0.02
+# How long each ramp step waits comes from the platform
+# (`Platform.volume_step_s`): it depends on what one volume write costs
+# there, which is 0.02 s on Linux and slower on macOS.
 # Go down faster than up (cover whatever is playing before the mic
 # finishes opening) and come back up slowly (so the return is not
 # noticeable) -- the same asymmetric smoothing already used in the
@@ -96,6 +98,7 @@ class Ducker:
 
     def _ramp(self) -> None:
         platform = get_platform()
+        step_s = platform.volume_step_s
         with self._lock:
             current = self._current
         if current is None:
@@ -133,4 +136,4 @@ class Ducker:
             platform.set_master_volume(current)
             with self._lock:
                 self._current = current
-            time.sleep(_STEP_S)
+            time.sleep(step_s)
