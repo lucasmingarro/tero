@@ -43,6 +43,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # si no tenés uv
 uv sync
 ```
 
+En macOS, `uv` sale por Homebrew (el script de arriba también anda):
+
+```bash
+brew install uv
+uv sync
+```
+
 ### 2. Paquetes de sistema
 
 ```bash
