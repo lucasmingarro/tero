@@ -4,10 +4,13 @@ Asistente de voz de escritorio, activado por tecla. Corre como daemon en
 segundo plano; el micrófono se abre solo mientras se mantiene apretada una
 tecla dedicada.
 
-Desarrollo en **Linux** (GNOME/Wayland) — el proyecto arrancó directo acá,
-no hubo migración desde Windows pese a que secciones viejas de este
-documento lo daban por planificado (ver `os_platform/linux.py`, ya escrito
-y en uso; no existe `os_platform/windows.py`).
+Hoy corre **solo en Linux** (GNOME/Wayland): es donde arrancó el proyecto
+y el único sistema con capa de plataforma escrita (`os_platform/linux.py`,
+en uso). **macOS está planificado**, con el diagnóstico y las fases en
+`docs/PLAN-MULTIPLATAFORMA.md` — todavía no arrancado:
+`create_platform()` tira `NotImplementedError` en cualquier sistema que no
+sea Linux. Windows quedó como tabla de diseño original y nunca se
+implementó (no existe `os_platform/windows.py`).
 
 Idioma del asistente: **español** (rioplatense). Idioma del código:
 **inglés** — identificadores, comentarios, docstrings y nombres de
@@ -100,16 +103,22 @@ necesidad.
 
 ## Stack
 
-| Pieza | Elección | Windows (nunca implementado) | Linux (real) |
+| Pieza | Elección | Linux (real) | macOS (planificado) |
 |---|---|---|---|
 | Audio in/out | `sounddevice` | igual | igual |
-| STT | Groq (Whisper `large-v3` online) con `faster-whisper` local de respaldo, ver más abajo | igual | igual |
+| STT | Groq (Whisper `large-v3` online) con `faster-whisper` local de respaldo, ver más abajo | igual | Groq igual; el respaldo local corre solo en CPU (CTranslate2), habría que bajar el modelo por defecto |
 | Modelo local | Qwen3 4B Instruct vía Ollama | igual | igual |
 | TTS | Piper (ONNX, voz es) | igual | igual |
-| Tecla global | — | `pynput` | `evdev` |
-| Ventana activa | — | `pygetwindow` / Win32 | `wmctrl` / D-Bus |
-| Media | — | teclas multimedia | MPRIS (`playerctl`) + Web API de Spotify |
-| Overlay | pywebview (Qt) + WebSocket | — | `QT_QPA_PLATFORM=xcb` (sin `gtk4-layer-shell`, no instalado) |
+| Tecla global | — | `evdev` sobre `/dev/input` (grupo `input`) | `pynput` (pide permiso de Input Monitoring) |
+| Volumen y ducking | — | `wpctl` sobre `@DEFAULT_AUDIO_SINK@` | `osascript set volume output volume` (CoreAudio vía pyobjc si la rampa queda lenta) |
+| Media | — | MPRIS (`playerctl`) + Web API de Spotify | Web API de Spotify (camino común) + AppleScript de respaldo |
+| Ventana activa | — | `wmctrl` / D-Bus a la extensión de GNOME | Accessibility (`AXUIElement` vía pyobjc); baja prioridad |
+| Overlay | pywebview + WebSocket | Qt con `QT_QPA_PLATFORM=xcb` (sin `gtk4-layer-shell`, no instalado), o la extensión de GNOME | backend Cocoa, sin Qt ni `wmctrl`; la extensión de GNOME no se porta |
+| Audio del sistema (overlay) | monitor del sink | PipeWire `.monitor` | no hay loopback nativo: se apaga (BlackHole opcional) |
+| Salud del equipo | — | `/proc/meminfo` + `nvidia-smi` | `psutil`; sin GPU que vigilar |
+| Notificaciones | — | `notify-send` | `osascript display notification` |
+| Servicio | — | systemd user ✅ (`systemd/tero.service`, ver más abajo) | `launchd` (`~/Library/LaunchAgents/local.tero.plist`) |
+| Launcher | — | `./tero` en bash (`flock`, `pgrep`, `gnome-extensions`) | reescritura en Python, la misma para los dos |
 
 ### STT: Groq online, Whisper local de respaldo
 
@@ -140,14 +149,14 @@ pantalla ni la terminal, ver más abajo). Se activó Zero Data Retention en
 la cuenta para que no la retengan. Decisión del usuario, sabiendo esto —
 lo que le importa proteger es la comprensión de frases libres, no el
 conocimiento general del modelo (ver charla del 2026-09-13).
-| Servicio | — | Task Scheduler | systemd user ✅ (`systemd/tero.service`, ver más abajo) |
 
 `modelo small` se probó primero pero alucinaba nombres propios (Trelew,
 artistas); se subió a `large-v3` a pedido explícito del usuario
 ("prefiero un modelo un poco más lento pero que funcione").
 
-La fila de Windows es la tabla de diseño original — nunca se llegó a
-escribir `os_platform/windows.py`, el desarrollo fue siempre en Linux.
+La columna de macOS es plan, no código: el detalle de qué está atado a
+Linux hoy y en qué orden se piensa desatarlo está en
+`docs/PLAN-MULTIPLATAFORMA.md`.
 
 ---
 
@@ -174,19 +183,35 @@ tero/
   config.toml
 ```
 
-### Capa de plataforma (clave para la migración)
+### Capa de plataforma (en expansión)
 
-Una sola interfaz de cinco funciones. El resto del programa nunca sabe en
-qué sistema corre. Migrar a Linux = escribir un archivo de ~150 líneas.
+La interfaz existe (`os_platform/base.py`, cinco métodos) pero está casi
+vacía: de los cinco, **solo `listen_key` y `notify` están implementados**
+(`active_window`, `capture_screen` y `media` tiran `NotImplementedError`).
+Y la mayor parte del acoplamiento a Linux vive **fuera** de
+`os_platform/`: `wpctl` en `tools/_ducking.py` y `tools/volume.py`,
+`playerctl` y `xdg-open` en `tools/music.py`, AT-SPI en
+`tools/terminal.py`, `wmctrl` y `/proc` en `tools/_youtube_screen.py`,
+`/proc/meminfo` y `nvidia-smi` en `health.py`, el monitor de PipeWire en
+`soul_connector/system_audio.py`, y `flock`/`pgrep`/`gnome-extensions` en
+el launcher `tero`. O sea: no es cierto que portar sea escribir un archivo
+de ~150 líneas — primero hay que mover ese acoplamiento adentro de la
+interfaz, y ahí sí cada OS es un archivo.
+
+Ese es justamente el plan de `docs/PLAN-MULTIPLATAFORMA.md`: `Platform`
+crece a ~10 métodos (volumen maestro, media, `open_app`, `read_terminal`,
+RAM/GPU, lanzar el browser), las tools dejan de llamar `subprocess`
+directo, y lo que un OS no soporte devuelve "no anda en esta máquina" en
+vez de fallar.
 
 ```python
-# os_platform/base.py
+# os_platform/base.py (interfaz de hoy)
 class Platform:
-    def listen_key(self, on_down, on_up): ...
-    def active_window(self) -> dict:      ...
-    def capture_screen(self) -> bytes:    ...
-    def media(self, action: str):         ...
-    def notify(self, text: str):          ...
+    def listen_key(self, on_down, on_up): ...   # implementado en linux.py
+    def active_window(self) -> dict:      ...   # NotImplementedError
+    def capture_screen(self) -> bytes:    ...   # NotImplementedError (fase 3)
+    def media(self, action: str):         ...   # NotImplementedError
+    def notify(self, text: str):          ...   # implementado en linux.py
 ```
 
 El audio **no** entra en esta abstracción: `sounddevice` ya es
@@ -240,32 +265,34 @@ Notas por herramienta:
   (`music.pause_spotify()`, apuntado a `-p spotify` a propósito, para
   no confundirse con el reproductor de la propia ventana de YouTube).
   **Ducking** (`tools/_ducking.py`, no es una herramienta del
-  modelo): mientras Tero escucha/piensa/habla, **todo lo que esté
-  sonando en el sistema** baja al 10% — progresivo, no de golpe, regla
-  global desde el 2026-09-14 (no una lista de apps conocidas: empezó
-  siendo solo Spotify, después se sumó a mano la ventana de YouTube, y
-  terminó siendo "cualquier audio" a pedido explícito del usuario) — y
-  vuelve solo al volumen real al terminar (no entre "pensando" y
-  "hablando": si hay que hablar, se queda abajo hasta el final para no
-  pegar un salto para arriba y otro para abajo antes de contestar). Se
-  identifica cada stream activo (`state=="running"`) vía `pw-dump`,
-  salvo el del propio proceso de Tero (TTS/beeps, por PID) para no
-  duckearse a sí mismo. `Ducker` guarda a qué **PIDs** corresponde su
-  estimación de volumen (no a qué ids de nodo de PipeWire, que pueden
-  cambiar aunque sea la misma ventana — confirmado en vivo navegando por
-  CDP) y fuerza releerlo si los PIDs activos cambiaron desde la última
-  vez — sin esto, arrastraba el volumen duckeado viejo sobre un stream
-  nuevo que en realidad arrancaba en su volumen real, dejándolo pegado
-  bajo (bug real, visto dos veces con cambios de canal de YouTube a
-  mitad de conversación). Dos vías descartadas en el camino para mover el
-  volumen: `playerctl volume` no sirve porque el cliente de Spotify para
-  Linux no implementa `SetVolume` vía MPRIS (éxito reportado, cero
-  efecto real); la Web API de Spotify (`/me/player/volume`) sí cambia el
-  volumen pero `/me/player/devices` tarda 1-3s en reflejarlo (eventual
-  consistency), demasiado lento para una rampa. Lo que funciona: el
-  propio volumen de cada stream de salida en PipeWire (`wpctl status` →
-  "Streams", node id propio, no el sink del sistema) — instantáneo y no
-  toca el sink que usa el TTS para salir.
+  modelo): mientras **la tecla está apretada** (de `on_down` a `on_up`,
+  o sea exactamente la ventana en que el micrófono está grabando), el
+  **volumen maestro** (`@DEFAULT_AUDIO_SINK@` vía `wpctl`) baja al 10% y
+  al soltar vuelve al volumen real, releído del sistema. La rampa es
+  progresiva y asimétrica (baja rápido para tapar lo que esté sonando
+  antes de que el mic termine de abrir, sube despacio para que el
+  retorno no se note), interpolada en un hilo aparte que nunca bloquea
+  al que llama. No se duckea durante "pensando" ni "hablando": ahí ya no
+  hay grabación que proteger, y la voz de Tero sale por ese mismo sink
+  — como el ducking dura solo lo que dura el apretón, nunca se solapa
+  con algo que Tero necesite que se escuche. `wpctl get-volume` redondea
+  a 2 decimales, así que el volumen real se lee **una vez por ciclo**
+  (bootstrap) y de ahí en más el `Ducker` es la única fuente de verdad
+  de "dónde está el volumen ahora"; releerlo en cada paso trababa la
+  rampa apenas la diferencia bajaba de ~0,01.
+  Diseño anterior, descartado el 2026-09-14: duckear **cada stream de
+  aplicación por separado**, identificándolo por PID en PipeWire. Se
+  cayó porque averiguar "qué stream de PipeWire es esta app ahora mismo"
+  es estructuralmente frágil (Spotify en Snap no lleva su PID en el nodo
+  que suena; Chrome cambia el id del stream al navegar por CDP y dejó el
+  volumen pegado en el 10% más de una vez) — el detalle largo, con cada
+  bug que llevó al rediseño, está en el docstring de `_ducking.py`.
+  Dos vías descartadas antes, para mover el volumen: `playerctl volume`
+  no sirve porque el cliente de Spotify para Linux no implementa
+  `SetVolume` vía MPRIS (éxito reportado, cero efecto real); la Web API
+  de Spotify (`/me/player/volume`) sí cambia el volumen pero
+  `/me/player/devices` tarda 1-3s en reflejarlo (eventual consistency),
+  demasiado lento para una rampa.
 - **Mapas**: `get_trip` geocodifica con Open-Meteo (misma API que el
   clima, sin clave) y calcula distancia/tiempo real con el servidor demo
   de OSRM (gratis, sin clave), devolviendo también la URL real de Google
@@ -516,12 +543,18 @@ que `./tero` distingue de una caída de verdad.
 6. **Linux** ✅ — `os_platform/linux.py` ya existe y funciona (desarrollo
    pasó a Linux desde el arranque del proyecto; no hay
    `os_platform/windows.py`).
+7. **Multiplataforma (macOS)** — no arrancada. Que `uv sync` y el loop
+   completo (tecla → grabar → STT → cerebro → TTS) anden en una Mac, con
+   lo GNOME-específico marcado como "solo Linux". Plan completo, con
+   diagnóstico de qué está atado a Linux y las fases 0 a 3, en
+   `docs/PLAN-MULTIPLATAFORMA.md`.
 
 Estado actual: **fases 1, 2, 5 y 6 completas y commiteadas.** Pendiente
 para retomar:
 - Fase 3 (Contexto): `read_terminal` ya migrado a AT-SPI (2026-09-13).
   Falta `capture_screen` (depende de `Platform.capture_screen`).
 - `delegate_to_codex` (fase 4) sigue sin arrancar.
+- Fase 7 (macOS): sin arrancar, plan escrito.
 
 ---
 
