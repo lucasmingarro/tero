@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Instalador de Tero. Pensado para correrse una vez, en un escritorio
-# Linux con apt (Ubuntu/Debian) y systemd/PipeWire.
+# Tero installer. Meant to be run once, on a Linux desktop with apt
+# (Ubuntu/Debian) and systemd/PipeWire.
 #
-# Cada paso explica POR QUÉ hace falta antes de instalar nada -- la idea
-# es que si algún día se descarta el proyecto, quede claro qué se puede
-# desinstalar y por qué se instaló en primer lugar (ver INSTALACIONES.md
-# para el detalle completo, este script es la versión ejecutable de eso).
+# Every step explains WHY it is needed before installing anything -- the
+# idea is that if the project is ever dropped, it stays clear what can be
+# uninstalled and why it was installed in the first place (see
+# INSTALACIONES.md for the full detail, this script is the executable
+# version of that).
 #
-# Los pasos de Spotify y Telegram necesitan cuentas/acciones manuales
-# (crear una app, crear un bot) que no se pueden scriptear -- el
-# instalador se detiene ahí y te dice exactamente qué hacer.
+# The Spotify and Telegram steps need manual accounts/actions (creating an
+# app, creating a bot) that cannot be scripted -- the installer stops there
+# and tells you exactly what to do.
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-pausa() {
+pause() {
     echo
     read -rp "Presioná Enter para continuar (Ctrl+C para salir)... "
 }
 
-seccion() {
+section() {
     echo
     echo "=================================================================="
     echo "  $1"
@@ -27,7 +28,7 @@ seccion() {
 }
 
 # ---------------------------------------------------------------------
-seccion "1/11 — uv (gestor de Python)"
+section "1/11 — uv (gestor de Python)"
 echo "Fija Python 3.12 sin tocar el Python del sistema: faster-whisper y"
 echo "evdev no siempre tienen wheels para versiones de Python muy nuevas."
 if ! command -v uv >/dev/null 2>&1; then
@@ -38,18 +39,18 @@ else
 fi
 
 # ---------------------------------------------------------------------
-seccion "2/11 — Dependencias de Python"
+section "2/11 — Dependencias de Python"
 echo "Todo esto vive en .venv/, no toca el sistema. Se borra solo si"
 echo "borrás la carpeta del proyecto."
 uv sync
 
 # ---------------------------------------------------------------------
-seccion "3/11 — Paquetes de sistema"
+section "3/11 — Paquetes de sistema"
 cat << 'EOF'
   libportaudio2       lib nativa que necesita sounddevice para grabar/
                       reproducir audio (no viene en el wheel de PyPI)
   playerctl           control de reproducción (play/pausa/siguiente) vía
-                      MPRIS -- lo usa la herramienta control_media
+                      MPRIS -- lo usa la herramienta control_playback
   wmctrl              le pide al gestor de ventanas "siempre encima" para
                       el soul-connector CLÁSICO (overlay) -- opcional, ver paso 9/11
   libxcb-cursor0
@@ -59,12 +60,12 @@ cat << 'EOF'
   (Si vas a usar el soul-connector como extensión de GNOME en vez del
   clásico, estos tres últimos no hacen falta -- ver paso 9/11.)
 EOF
-pausa
+pause
 sudo apt install -y libportaudio2 playerctl wmctrl \
     libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1
 
 # ---------------------------------------------------------------------
-seccion "4/11 — Grupo 'input' (permiso de teclado)"
+section "4/11 — Grupo 'input' (permiso de teclado)"
 echo "evdev necesita leer /dev/input/event* sin ser root, para la tecla"
 echo "global de activación (push-to-talk)."
 if groups "$USER" | grep -qw input; then
@@ -79,7 +80,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-seccion "5/11 — Ollama + modelo (el cerebro)"
+section "5/11 — Ollama + modelo (el cerebro)"
 echo "Servidor del modelo local. qwen3:4b-instruct (no qwen3:4b a secas:"
 echo "la variante base agrega ~15-25s de razonamiento <think> a cada"
 echo "respuesta, la instruct no)."
@@ -91,14 +92,14 @@ fi
 ollama pull qwen3:4b-instruct
 
 # ---------------------------------------------------------------------
-seccion "6/11 — Voz (Piper)"
-echo "Modelo de voz en español (Argentina). Se descarga a voz/modelos/"
+section "6/11 — Voz (Piper)"
+echo "Modelo de voz en español (Argentina). Se descarga a voice/models/"
 echo "(gitignored, es un binario pesado)."
 uv run python -m piper.download_voices es_AR-daniela-high \
-    --download-dir voz/modelos
+    --download-dir voice/models
 
 # ---------------------------------------------------------------------
-seccion "7/11 — Whisper (STT local)"
+section "7/11 — Whisper (STT local)"
 echo "No hace falta instalar nada: faster-whisper descarga el modelo"
 echo "(large-v3 por defecto) solo, la primera vez que hace falta usarlo."
 echo "Se puede cambiar a 'medium' o 'small' en config.toml si preferís"
@@ -106,7 +107,7 @@ echo "menos precisión a cambio de más velocidad. Con Groq configurado"
 echo "(paso siguiente), esto pasa a ser solo el respaldo offline."
 
 # ---------------------------------------------------------------------
-seccion "8/11 — Groq (opcional, transcripción online)"
+section "8/11 — Groq (opcional, transcripción online)"
 cat << 'EOF'
 Sin esto, Whisper local hace toda la transcripción y se carga al
 arrancar. Con una API key de Groq, la transcripción va primero por Groq
@@ -127,7 +128,7 @@ Groq esté disponible (ver CLAUDE.md, sección STT).
 EOF
 
 # ---------------------------------------------------------------------
-seccion "9/11 — Soul-connector (opcional, overlay animado)"
+section "9/11 — Soul-connector (opcional, overlay animado)"
 cat << 'EOF'
 Sin esto, Tero funciona igual -- el soul-connector es un cliente aparte,
 opcional. Hay dos implementaciones, y ./tero detecta sola cuál usar.
@@ -137,11 +138,11 @@ gnome-shell, que ya está en memoria, así que cuesta prácticamente nada
 (medido: por debajo del ruido de medición) contra ~1,3GB de RAM del
 soul-connector clásico. No necesita los paquetes Qt del paso 3/11.
 
-  cd soul-connector-gnome && ./instalar.sh
+  cd soul-connector-gnome && ./install.sh
 
 Es un symlink + gnome-extensions enable. En Wayland, GNOME no relee
 extensiones nuevas hasta reiniciar la sesión (logout/login) -- después
-de eso queda andando solo. ./desinstalar.sh lo saca.
+de eso queda andando solo. ./uninstall.sh lo saca.
 
 El soul-connector clásico (pywebview + QtWebEngine, paquetes ya
 instalados en el paso 3/11) no necesita instalación aparte: es el que
@@ -150,7 +151,7 @@ cualquier escritorio, no solo GNOME.
 EOF
 
 # ---------------------------------------------------------------------
-seccion "10/11 — Spotify (opcional, para música real)"
+section "10/11 — Spotify (opcional, para música real)"
 cat << 'EOF'
 Sin esto, "poné X" falla. Con esto, busca la canción real y la reproduce
 (no solo abre una búsqueda en el navegador). Requiere Spotify Premium.
@@ -158,12 +159,12 @@ Sin esto, "poné X" falla. Con esto, busca la canción real y la reproduce
   1. https://developer.spotify.com/dashboard -> crear app (Web API).
   2. Redirect URI: http://127.0.0.1:8942/callback
   3. Copiá el Client ID a config.toml, sección [spotify].
-  4. Corré: uv run python -m herramientas._spotify_auth
+  4. Corré: uv run python -m tools._spotify_auth
      (abre el navegador, autorizás una vez, listo)
 EOF
 
 # ---------------------------------------------------------------------
-seccion "11/11 — Telegram (opcional, para mandar cosas al celular)"
+section "11/11 — Telegram (opcional, para mandar cosas al celular)"
 cat << 'EOF'
 Sin esto, "mandalo al celular" falla. Gratis, sin límites para uso
 personal, no requiere OAuth ni proyecto de Google Cloud.
@@ -181,7 +182,7 @@ personal, no requiere OAuth ni proyecto de Google Cloud.
      chmod 600 ~/.config/tero/telegram.json
 EOF
 
-seccion "Listo"
+section "Listo"
 echo "Arrancar todo (daemon + soul-connector, el que corresponda): ./tero"
 echo
 echo "Ver README.md para más detalle, e INSTALACIONES.md para el registro"

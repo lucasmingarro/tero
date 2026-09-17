@@ -1,19 +1,20 @@
-// Toggle de Tero en el menú rápido de GNOME (el que se abre desde arriba
-// a la derecha, junto a WiFi/Bluetooth/etc. -- pedido explícito del
-// usuario, mostró una captura de ese menú). Controla el servicio
-// systemd de usuario (ver systemd/tero.service) en vez de matar procesos
-// a mano: iniciar/reiniciar/cerrar, y un enlace directo al log para ver
-// qué está pasando sin abrir una terminal.
+// Tero toggle in GNOME's quick settings menu (the one that opens from the top
+// right, next to WiFi/Bluetooth/etc. -- an explicit request from the user, who
+// showed a screenshot of that menu). It controls the systemd user service
+// (see systemd/tero.service) instead of killing processes by hand:
+// start/restart/stop, plus a direct link to the log to see what is going on
+// without opening a terminal.
 //
-// Por qué no vive adentro de extension.js: es una pieza independiente
-// del soul-connector (la onda) -- puede quedar visible aunque el usuario
-// desinstale/pruebe otra versión de la onda, y viceversa. Se instancia
-// desde `enable()`/`disable()` de extension.js igual que el resto.
+// Why it does not live inside extension.js: it is a piece independent of the
+// soul-connector (the wave) -- it can stay visible even if the user
+// uninstalls or tries another version of the wave, and vice versa. It is
+// instantiated from extension.js's `enable()`/`disable()` like everything
+// else.
 //
-// El estado (¿está corriendo?) se relee cada pocos segundos con
-// `systemctl --user is-active` en vez de asumir que el último click fue
-// la verdad -- si salud.py corta a Tero solo (RAM crítica) o alguien lo
-// para desde una terminal, el toggle tiene que notarlo igual.
+// The state (is it running?) is re-read every few seconds with `systemctl
+// --user is-active` instead of assuming the last click was the truth -- if
+// health.py shuts Tero down on its own (critical RAM) or somebody stops it
+// from a terminal, the toggle has to notice anyway.
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -25,22 +26,22 @@ import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js'
 
 const QuickSettingsMenu = Main.panel.statusArea.quickSettings;
 
-const INTERVALO_POLL_S = 4;
-const RUTA_LOG = GLib.build_filenamev(
+const POLL_INTERVAL_S = 4;
+const LOG_PATH = GLib.build_filenamev(
     [GLib.get_home_dir(), 'proyectos', 'tero', 'logs', 'tero.log']);
 
-function _correr(argv) {
-    // Fire-and-forget a propósito: no hace falta esperar el resultado
-    // para refrescar el estado, el próximo poll ya lo muestra real.
+function _run(argv) {
+    // Fire-and-forget on purpose: there is no need to wait for the result to
+    // refresh the state, the next poll already shows the real one.
     try {
-        const proceso = new Gio.Subprocess({argv, flags: Gio.SubprocessFlags.NONE});
-        proceso.init(null);
+        const process = new Gio.Subprocess({argv, flags: Gio.SubprocessFlags.NONE});
+        process.init(null);
     } catch (error) {
         logError(error, `Tero (panel): ${argv.join(' ')}`);
     }
 }
 
-const _systemctl = accion => _correr(['systemctl', '--user', accion, 'tero']);
+const _systemctl = action => _run(['systemctl', '--user', action, 'tero']);
 
 const TeroToggle = GObject.registerClass(
 class TeroToggle extends QuickSettings.QuickMenuToggle {
@@ -48,67 +49,67 @@ class TeroToggle extends QuickSettings.QuickMenuToggle {
         super._init({
             title: 'Tero',
             iconName: 'audio-input-microphone-symbolic',
-            toggleMode: false, // el estado real lo manda systemctl, no el click
+            toggleMode: false, // the real state comes from systemctl, not the click
         });
 
         this.menu.setHeader('audio-input-microphone-symbolic', 'Tero');
 
-        const seccion = new PopupMenu.PopupMenuSection();
-        this._itemIniciar = seccion.addAction('Iniciar', () => _systemctl('start'));
-        this._itemReiniciar = seccion.addAction('Reiniciar', () => _systemctl('restart'));
-        this._itemCerrar = seccion.addAction('Cerrar', () => _systemctl('stop'));
-        this.menu.addMenuItem(seccion);
+        const section = new PopupMenu.PopupMenuSection();
+        this._startItem = section.addAction('Iniciar', () => _systemctl('start'));
+        this._restartItem = section.addAction('Reiniciar', () => _systemctl('restart'));
+        this._stopItem = section.addAction('Cerrar', () => _systemctl('stop'));
+        this.menu.addMenuItem(section);
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.menu.addAction('Ver log', () => _correr(['xdg-open', RUTA_LOG]));
+        this.menu.addAction('Ver log', () => _run(['xdg-open', LOG_PATH]));
 
-        // Click directo sobre el ícono (sin abrir el submenú): mismo
-        // gesto de un solo toque que Wifi/Bluetooth -- prende si está
-        // apagado, apaga si está prendido.
-        this.connect('clicked', () => _systemctl(this._activo ? 'stop' : 'start'));
+        // A direct click on the icon (without opening the submenu): the same
+        // one-tap gesture as Wifi/Bluetooth -- turns it on if it is off, off
+        // if it is on.
+        this.connect('clicked', () => _systemctl(this._active ? 'stop' : 'start'));
 
-        this._activo = null;
-        this._actualizarEstado();
-        this._idPoll = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, INTERVALO_POLL_S, () => {
-                this._actualizarEstado();
+        this._active = null;
+        this._updateState();
+        this._pollId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, POLL_INTERVAL_S, () => {
+                this._updateState();
                 return GLib.SOURCE_CONTINUE;
             });
         this.connect('destroy', () => {
-            if (this._idPoll) {
-                GLib.Source.remove(this._idPoll);
-                this._idPoll = 0;
+            if (this._pollId) {
+                GLib.Source.remove(this._pollId);
+                this._pollId = 0;
             }
         });
     }
 
-    _actualizarEstado() {
-        let proceso;
+    _updateState() {
+        let process;
         try {
-            proceso = new Gio.Subprocess({
+            process = new Gio.Subprocess({
                 argv: ['systemctl', '--user', 'is-active', 'tero'],
                 flags: Gio.SubprocessFlags.STDOUT_PIPE,
             });
-            proceso.init(null);
+            process.init(null);
         } catch (error) {
             logError(error, 'Tero (panel): systemctl --user is-active tero');
             return;
         }
-        proceso.communicate_utf8_async(null, null, (_p, resultado) => {
-            let salida = '';
+        process.communicate_utf8_async(null, null, (_p, result) => {
+            let output = '';
             try {
-                [, salida] = proceso.communicate_utf8_finish(resultado);
+                [, output] = process.communicate_utf8_finish(result);
             } catch (error) {
-                return; // el toggle puede haberse destruido mientras esperaba
+                return; // the toggle may have been destroyed while waiting
             }
-            const activo = salida.trim() === 'active';
-            if (activo === this._activo)
+            const active = output.trim() === 'active';
+            if (active === this._active)
                 return;
-            this._activo = activo;
-            this.checked = activo;
-            this.subtitle = activo ? 'Escuchando' : 'Apagado';
-            this._itemIniciar.visible = !activo;
-            this._itemReiniciar.visible = activo;
-            this._itemCerrar.visible = activo;
+            this._active = active;
+            this.checked = active;
+            this.subtitle = active ? 'Escuchando' : 'Apagado';
+            this._startItem.visible = !active;
+            this._restartItem.visible = active;
+            this._stopItem.visible = active;
         });
     }
 });
@@ -122,7 +123,10 @@ class TeroIndicator extends QuickSettings.SystemIndicator {
         QuickSettingsMenu.addExternalIndicator(this);
     }
 
-    destruir() {
+    // Not called `destroy`: that is GObject's own method, and calling
+    // this.destroy() from inside an override named destroy() recurses
+    // forever.
+    teardown() {
         this.quickSettingsItems.forEach(item => item.destroy());
         this.destroy();
     }

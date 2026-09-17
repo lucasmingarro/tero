@@ -638,6 +638,17 @@
       <p>Fix: <code>_nodos_a_duckear()</code> ahora devuelve <code>(id, pid)</code>, y <code>Ducker</code> compara por <strong>PID del proceso</strong>, no por id de nodo — el PID es estable mientras la app no se cierre de verdad, sea cual sea el id que PipeWire le asigne al stream en cada momento. Probado en vivo reproduciendo el escenario exacto: duckear un canal, cambiar de canal a mitad de la rampa (con el fix de CDP de la entrada anterior ya puesto) y desactivar — los dos streams de la ventana nueva vuelven a 1.0 de verdad, no quedan pegados.</p>
     </div>
   </section>
+
+  <section class="dia">
+    <h2>2026-09-17</h2>
+
+    <div class="entrada">
+      <div class="tags"><span class="tag">refactor</span></div>
+      <p><strong>Todo el código pasó a inglés</strong>, de una sola vez: carpetas (<code>cerebro/</code> → <code>brain/</code>, <code>herramientas/</code> → <code>tools/</code>, <code>voz/</code> → <code>voice/</code>, <code>plataforma/</code> → <code>os_platform/</code>, <code>salud.py</code> → <code>health.py</code>), nombres de archivo (<code>musica.py</code> → <code>music.py</code>, <code>_pantalla_youtube.py</code> → <code>_youtube_screen.py</code>, <code>onda.js</code> → <code>wave.js</code>, etc.), identificadores, comentarios, docstrings y claves de <code>config.toml</code>. Motivo: el proyecto se lee y se escribe en gran parte con asistentes de IA, y mezclar idiomas en los identificadores agregaba fricción en cada búsqueda y cada refactor. <code>plataforma/</code> no quedó como <code>platform/</code> a propósito: ese nombre tapa el módulo <code>platform</code> de la stdlib.</p>
+      <p><strong>Lo que no se tradujo, a propósito:</strong> los strings que Tero dice en voz alta (los <code>return</code> de las tools), los mensajes de log y de error, <code>brain/prompt.py</code> entero, y la documentación de usuario (<code>README.md</code>, <code>INSTALACIONES.md</code>, <code>CLAUDE.md</code>, esta bitácora). El prompt en castellano <em>es</em> lo que hace que Tero hable rioplatense; traducirlo le cambiaría el registro a todo lo que dice. La convención quedó escrita en <code>AGENTS.md</code>, en la raíz, para que no haya que adivinarla en el próximo cambio.</p>
+      <p>Las entradas anteriores de esta bitácora siguen nombrando los archivos y las funciones como se llamaban <em>en ese momento</em> (<code>herramientas/musica.py</code>, <code>reproducir_musica</code>, <code>cerebro/router.py</code>) — es un registro histórico, no un mapa del repo actual. Para la estructura de hoy, ver <code>CLAUDE.md</code>.</p>
+    </div>
+  </section>
 </main>
 </body>
 </html>

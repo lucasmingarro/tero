@@ -26,7 +26,7 @@ nada que pelear.
 ## Instalar
 
 ```bash
-./instalar.sh
+./install.sh
 ```
 
 Hace un symlink desde `~/.local/share/gnome-shell/extensions/` a esta
@@ -39,7 +39,7 @@ reloguear ya queda andando sola.
 ## Sacarla
 
 ```bash
-./desinstalar.sh
+./uninstall.sh
 ```
 
 Y se fue. Esto está pensado así desde el diseño:
@@ -51,7 +51,7 @@ Y se fue. Esto está pensado así desde el diseño:
   `main` no requiere deshacer nada acá.
 - **No instala nada a nivel sistema.** Ni paquetes, ni servicios, ni sudo.
   Lo único que deja fuera del repo es un symlink en el home y el uuid
-  anotado en dconf; `desinstalar.sh` borra las dos cosas.
+  anotado en dconf; `uninstall.sh` borra las dos cosas.
 - **El soul-connector de pywebview sigue intacto.** `soul_connector/` no
   se tocó: si sacás la extensión, `./tero` vuelve a levantarlo solo
   (detecta si la extensión está habilitada y en ese caso no lo levanta,
@@ -64,14 +64,14 @@ Y se fue. Esto está pensado así desde el diseño:
 | | |
 |---|---|
 | `extension.js` | Integración con el shell: widget flotante, estados, reproductor |
-| `onda.js` | Port a Cairo del estilo `ios9` de SiriWave (la matemática de la onda) |
-| `enlace.js` | Cliente WebSocket del stream de niveles del daemon |
+| `wave.js` | Port a Cairo del estilo `ios9` de SiriWave (la matemática de la onda) |
+| `link.js` | Cliente WebSocket del stream de niveles del daemon |
 | `stylesheet.css` | Tipografías y colores del nombre de canción y la barra |
 
 ## Moverlo
 
 `Ctrl+Alt` + arrastrar con el mouse. La posición se guarda en
-`~/.config/tero/soul_connector_posicion.json` y se respeta en el próximo
+`~/.config/tero/soul_connector_position.json` y se respeta en el próximo
 arranque, recortada al work area por si cambió la pantalla.
 
 En GNOME 50 quién recibe un clic lo decide el *pick* de Clutter en ese
@@ -98,14 +98,14 @@ extensión y en Wayland recargarlo cuesta un logout. Se prueba en un shell
 anidado — una ventana con un GNOME entero adentro, que arranca de cero:
 
 ```bash
-./probar.sh
+./test.sh
 ```
 
 Editar, correrlo, probar a mano en esa ventana (arrastre incluido),
 repetir. Vuelve a abrir uno limpio cada vez. Solo al final se reloguea,
 una vez, para pasarlo a la sesión de verdad.
 
-Para cambios de dibujo ni siquiera hace falta eso: `./previsualizar.js`
+Para cambios de dibujo ni siquiera hace falta eso: `./preview.js`
 renderiza la onda y la barra a un PNG.
 
 Ojo: en GNOME 50 la opción `--nested` ya no existe (era la de siempre en

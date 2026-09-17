@@ -83,7 +83,7 @@ latencia extra), la instruct no.
 
 ```bash
 uv run python -m piper.download_voices es_AR-daniela-high \
-    --download-dir voz/modelos
+    --download-dir voice/models
 ```
 
 ### 6. Whisper (STT)
@@ -117,9 +117,9 @@ mientras Groq esté disponible).
 
 ### 7. Spotify (opcional, para música real)
 
-Sin esto, los pedidos de música fallan. Con esto, `reproducir_musica`
+Sin esto, los pedidos de música fallan. Con esto, `play_music`
 busca la canción real y la reproduce (no solo abre una búsqueda), y
-`reproducir_musica_aleatoria` elige algo nuevo de "Tus me gusta" para los
+`play_random_music` elige algo nuevo de "Tus me gusta" para los
 pedidos genéricos ("poné música") en vez de repetir siempre lo último.
 Ambas encolan varios temas más detrás del primero, así que "siguiente"
 tiene a dónde avanzar.
@@ -132,7 +132,7 @@ tiene a dónde avanzar.
 4. Login único:
 
    ```bash
-   uv run python -m herramientas._spotify_auth
+   uv run python -m tools._spotify_auth
    ```
 
    Se abre el navegador, autorizás, y el refresh token queda guardado en
@@ -174,9 +174,9 @@ free (sí deja buscar).
 
 Ya viene con valores razonables. Lo más probable que quieras ajustar:
 
-- `[tecla] nombre` — cuál tecla activa la escucha (nombre evdev, ej.
+- `[key] name` — cuál tecla activa la escucha (nombre evdev, ej.
   `KEY_RIGHTCTRL`, `KEY_PAUSE`).
-- `[stt] modelo` — `large-v3` (preciso, más lento) vs `medium`/`small`
+- `[stt] model` — `large-v3` (preciso, más lento) vs `medium`/`small`
   (más rápido, se equivoca más con nombres propios). Con Groq configurado
   (paso 6b), esto es solo el respaldo offline; sin Groq, es la
   transcripción de siempre.
@@ -233,7 +233,7 @@ Para desarrollo, si querés correr solo una parte:
 
 ```bash
 uv run python main.py                          # solo el daemon
-QT_QPA_PLATFORM=xcb uv run python -m soul_connector.ventana   # solo el soul-connector clásico
+QT_QPA_PLATFORM=xcb uv run python -m soul_connector.window   # solo el soul-connector clásico
 ```
 
 (El soul-connector como extensión de GNOME no se lanza así: una vez
@@ -256,13 +256,13 @@ Hay dos implementaciones, y `./tero` detecta sola cuál usar:
   Se mueve con `Ctrl+Alt` + arrastrar. Instalación:
 
   ```bash
-  cd soul-connector-gnome && ./instalar.sh
+  cd soul-connector-gnome && ./install.sh
   ```
 
   Es un symlink a esta carpeta del repo + `gnome-extensions enable`. En
   Wayland, GNOME no relee extensiones nuevas hasta reiniciar la sesión
   (cerrar sesión y volver a entrar) — después de eso queda andando solo.
-  `./desinstalar.sh` lo saca. Detalle completo, incluidas las trampas de
+  `./uninstall.sh` lo saca. Detalle completo, incluidas las trampas de
   GNOME 50, en `soul-connector-gnome/README.md`.
 
 - **Overlay clásico** (`soul_connector/`, pywebview + QtWebEngine):
@@ -275,9 +275,11 @@ Hay dos implementaciones, y `./tero` detecta sola cuál usar:
 
 ## Herramientas disponibles
 
-`consultar_clima`, `reproducir_musica`, `reproducir_musica_aleatoria`,
-`control_media`, `ajustar_volumen`,
-`abrir_url`, `buscar_en_sitio` (mercadolibre/google/youtube/amazon/maps),
-`calcular_viaje` (distancia y ruta entre dos lugares), `leer_terminal`,
-`consultar_hora`, `mandar_al_celular`. Cada una es un archivo de ~20-80
-líneas en `herramientas/` — agregar una nueva no toca el núcleo.
+`get_weather`, `play_music`, `play_random_music`,
+`control_playback`, `set_volume`,
+`open_url`, `search_site` (mercadolibre/google/youtube/amazon/maps),
+`get_trip` (distancia y ruta entre dos lugares), `read_terminal`,
+`get_time`, `send_to_phone`, `play_youtube_channel`, `open_youtube`,
+`suggest_youtube_channels`, `move_window_to_monitor`. Cada una es un
+archivo de ~20-80 líneas en `tools/` — agregar una nueva no toca el
+núcleo.

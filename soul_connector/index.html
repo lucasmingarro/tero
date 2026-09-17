@@ -18,11 +18,11 @@
     overflow: hidden;
   }
 
-  #onda-wrapper {
+  #wave-wrapper {
     position:relative;
   }
 
-  #onda {
+  #wave {
     width: 260px;
     height: 74px;
     position: relative;
@@ -42,7 +42,7 @@
   #info.visible {
     opacity: 0.7;
   }
-  #cancion {
+  #song {
     color: rgba(255, 255, 255, 0.8);
     font: 11px -apple-system, "Segoe UI", sans-serif;
     text-align: center;
@@ -52,7 +52,7 @@
     text-shadow: 0 0 6px rgba(0,0,0,0.6);
     margin-bottom: 3px;
   }
-  #fila-progreso {
+  #progress-row {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -64,47 +64,46 @@
     opacity: 0;
     transition: opacity 0.6s ease;
   }
-  #fila-progreso.visible {
+  #progress-row.visible {
     opacity: 1;
   }
-  #fila-progreso span {
+  #progress-row span {
     color: rgba(255, 255, 255, 0.55);
     font: 9px -apple-system, "Segoe UI", sans-serif;
     text-shadow: 0 0 4px rgba(0,0,0,0.6);
     min-width: 26px;
   }
-  #tiempo-actual { text-align: right; margin-top: -12px; }
-  #tiempo-total { text-align: left; margin-top: -12px;}
-  /* Barra de luz: adaptada de un diseño que pasó el usuario (gradiente
-     animado + brillo "respirando" + puntas achaflanadas). El chaflán
-     original era de 16px para una barra de 520px -- acá se achica a 3px
-     (mismo alto que la barra) para que no se vea como un rombo en algo
-     tan chico. */
+  #time-current { text-align: right; margin-top: -12px; }
+  #time-total { text-align: left; margin-top: -12px;}
+  /* Light bar: adapted from a design the user passed along (animated
+     gradient + "breathing" glow + chamfered tips). The original chamfer was
+     16px for a 520px bar -- here it shrinks to 3px (the same height as the
+     bar) so it does not look like a diamond on something this small. */
   @property --glow {
     syntax: "<color>";
     inherits: false;
     initial-value: #168fe9;
   }
-  #barra {
+  #bar {
     flex: 1;
     height: 1px;
     position: relative;
     background: transparent;
     overflow: visible;
   }
-  #barra::before {
+  #bar::before {
     content: "";
     position: absolute;
     inset: 0;
     background: rgba(255, 255, 255, 0);
     clip-path: polygon(0 50%, 3px 0, calc(100% - 3px) 0, 100% 50%, calc(100% - 3px) 100%, 3px 100%);
   }
-  #barra-relleno {
+  #bar-fill {
     height: 100%;
     width: 0%;
-    /* Sin esto, al cambiar de canción el ancho salta de golpe (de donde
-       había quedado la anterior a ~0% de la nueva) y el puntito de luz
-       "se apaga y prende" de un frame al otro en vez de deslizarse. */
+    /* Without this, on a song change the width jumps at once (from wherever
+       the previous one ended to ~0% of the new one) and the dot of light
+       "blinks off and on" from one frame to the next instead of sliding. */
     transition: width 0.25s ease;
     position: relative;
     {# clip-path: polygon(0 50%, 3px 0, calc(100% - 3px) 0, 100% 50%, calc(100% - 3px) 100%, 3px 100%); #}
@@ -118,21 +117,21 @@
     border-radius: 100%;
     opacity: 1;
     animation:
-      barra-color-flow 4s linear infinite,
-      barra-glow-color 4s linear infinite,
-      barra-respira 1.8s ease-in-out infinite;
+      bar-color-flow 4s linear infinite,
+      bar-glow-color 4s linear infinite,
+      bar-breathe 1.8s ease-in-out infinite;
   }
-  /* En pausa: se congela el color/brillo animado de la barra, y el
-     puntito de luz late en rojo con el centro blanco -- como un
-     "corazón" pulsando, para que se note de un vistazo que está pausado. */
-  #barra-relleno.pausado {
+  /* Paused: the animated color/glow of the bar freezes, and the dot of
+     light beats in red with a white center -- like a "heart" pulsing, so it
+     is obvious at a glance that it is paused. */
+  #bar-fill.paused {
     animation-play-state: paused;
     filter: drop-shadow(0 0 3px #ff4d4d) drop-shadow(0 0 8px #ff4d4d);
   }
-  #barra-relleno.pausado::after {
-    animation: punto-pulso 2.2s ease-in-out infinite;
+  #bar-fill.paused::after {
+    animation: dot-pulse 2.2s ease-in-out infinite;
   }
-  @keyframes punto-pulso {
+  @keyframes dot-pulse {
     0%, 100% {
       background: #fff;
       box-shadow: 0 0 2px 1px #fff, 0 0 6px 2px #22c55e;
@@ -142,9 +141,9 @@
       box-shadow: 0 0 3px 1px #22c55e, 0 0 9px 3px #22c55e;
     }
   }
-  /* Puntito de luz en la punta del progreso, un poco más fuerte que el
-     resto de la barra pero sin llamar demasiado la atención. */
-  #barra-relleno::after {
+  /* Dot of light at the tip of the progress, a bit stronger than the rest
+     of the bar but without drawing too much attention. */
+  #bar-fill::after {
     content: "";
     position: absolute;
     right: -1px;
@@ -156,15 +155,15 @@
     background: #fff;
     box-shadow: 0 0 3px 1px rgba(255, 255, 255, 0.85), 0 0 7px 2px var(--glow);
   }
-  @keyframes barra-respira {
+  @keyframes bar-breathe {
     50% {
       filter: brightness(1.25) drop-shadow(0 0 4px var(--glow)) drop-shadow(0 0 11px var(--glow));
     }
   }
-  @keyframes barra-color-flow {
+  @keyframes bar-color-flow {
     to { background-position: -300% 0; }
   }
-  @keyframes barra-glow-color {
+  @keyframes bar-glow-color {
     0%, 100% { --glow: #168fe9; }
     25% { --glow: #20dba5; }
     42% { --glow: #f33f64; }
@@ -173,17 +172,17 @@
     84% { --glow: #2668db; }
   }
   @media (prefers-reduced-motion: reduce) {
-    #barra-relleno { animation: none; }
+    #bar-fill { animation: none; }
   }
 
-  /* Partículas del estado "codex" (Tero delegando en Codex/ChatGPT):
-     nacen en el eje de la onda y suben apagándose, idea de un demo que
-     pasó el usuario (`@keyframes rise` full-screen) -- acá el "arriba" es
-     la punta de una onda de 74px, no la pantalla entera, así que la
-     distancia y la duración se achican en proporción. */
-  .tero-particula {
+  /* Particles for the "codex" state (Tero delegating to Codex/ChatGPT):
+     they are born on the axis of the wave and rise while fading out, an
+     idea from a demo the user passed along (a full-screen `@keyframes
+     rise`) -- here "up" is the tip of a 74px wave, not the whole screen, so
+     the distance and duration shrink proportionally. */
+  .tero-particle {
     position: absolute;
-    bottom: 43px; /* altura del eje de la onda dentro de los 74px */
+    bottom: 43px; /* height of the wave axis within the 74px */
     left: var(--left);
     width: var(--size);
     height: var(--size);
@@ -191,265 +190,265 @@
     pointer-events: none;
     background: var(--color);
     box-shadow: 0 0 6px var(--color), 0 0 12px var(--color);
-    animation: tero-particula-sube var(--duracion) linear forwards;
+    animation: tero-particle-rise var(--duration) linear forwards;
   }
-  @keyframes tero-particula-sube {
+  @keyframes tero-particle-rise {
     0% { opacity: 0; transform: translate(0, 0) scale(0.3); }
     15% { opacity: 1; }
-    100% { opacity: 0; transform: translate(var(--deriva), -46px) scale(1); }
+    100% { opacity: 0; transform: translate(var(--drift), -46px) scale(1); }
   }
 </style>
 </head>
 <body>
   <div id="soul-connector-wrapper">
 
-    <div id="onda-wrapper">
-      <div id="onda"></div>
-      <div id="fila-progreso">
-        <span id="tiempo-actual">0:00</span>
-        <div id="barra"><div id="barra-relleno"></div></div>
-        <span id="tiempo-total">0:00</span>
+    <div id="wave-wrapper">
+      <div id="wave"></div>
+      <div id="progress-row">
+        <span id="time-current">0:00</span>
+        <div id="bar"><div id="bar-fill"></div></div>
+        <span id="time-total">0:00</span>
       </div>
     </div>
     <div id="info">
-      <div id="cancion"></div>
+      <div id="song"></div>
     </div>
   </div>
 <script>
-// Es render, no IA: RMS -> amplitud de la onda, con suavizado asimétrico
-// propio (ataque rápido, decaimiento lento) antes de pasárselo a SiriWave
-// (que además tiene su propio lerp interno, así que queda doblemente
-// suave). El RMS crudo tiembla -- esto es lo que separa "se ve pro" de
-// "se ve amateur".
+// This is rendering, not AI: RMS -> wave amplitude, with its own asymmetric
+// smoothing (fast attack, slow decay) before handing it to SiriWave (which
+// also has its own internal lerp, so it ends up doubly smooth). Raw RMS
+// jitters -- this is what separates "looks pro" from "looks amateur".
 
-const COLORES = {
-  idle:        "#4a4458",
-  escuchando:  "#ffffff",
-  pensando:    "#c77dff",
-  hablando:    "#7c5cff",
-  musica:      "#5cffd4",
-  codex:       "#00eaff",
+const COLORS = {
+  idle:      "#4a4458",
+  listening: "#ffffff",
+  thinking:  "#c77dff",
+  speaking:  "#7c5cff",
+  music:     "#5cffd4",
+  codex:     "#00eaff",
 };
 
-// Mismo acento que el demo de partículas: cian, violeta, rosa, blanco.
-const PALETA_PARTICULAS = ["#00eaff", "#7b61ff", "#ff3cac", "#ffffff"];
-let intervaloParticulas = null;
+// The same accent as the particle demo: cyan, violet, pink, white.
+const PARTICLE_PALETTE = ["#00eaff", "#7b61ff", "#ff3cac", "#ffffff"];
+let particleInterval = null;
 
-function crearParticula() {
-  const particula = document.createElement("span");
-  particula.className = "tero-particula";
-  particula.style.setProperty("--size", `${Math.random() * 4 + 2}px`);
-  particula.style.setProperty("--left", `${Math.random() * 240 + 10}px`);
-  particula.style.setProperty("--duracion", `${Math.random() * 0.7 + 0.6}s`);
-  particula.style.setProperty("--deriva", `${Math.random() * 32 - 16}px`);
-  particula.style.setProperty(
+function createParticle() {
+  const particle = document.createElement("span");
+  particle.className = "tero-particle";
+  particle.style.setProperty("--size", `${Math.random() * 4 + 2}px`);
+  particle.style.setProperty("--left", `${Math.random() * 240 + 10}px`);
+  particle.style.setProperty("--duration", `${Math.random() * 0.7 + 0.6}s`);
+  particle.style.setProperty("--drift", `${Math.random() * 32 - 16}px`);
+  particle.style.setProperty(
     "--color",
-    PALETA_PARTICULAS[Math.floor(Math.random() * PALETA_PARTICULAS.length)]
+    PARTICLE_PALETTE[Math.floor(Math.random() * PARTICLE_PALETTE.length)]
   );
-  document.getElementById("onda-wrapper").appendChild(particula);
-  particula.addEventListener("animationend", () => particula.remove());
+  document.getElementById("wave-wrapper").appendChild(particle);
+  particle.addEventListener("animationend", () => particle.remove());
 }
 
-function empezarParticulas() {
-  if (intervaloParticulas !== null) return;
-  intervaloParticulas = setInterval(crearParticula, 45);
+function startParticles() {
+  if (particleInterval !== null) return;
+  particleInterval = setInterval(createParticle, 45);
 }
 
-function pararParticulas() {
-  if (intervaloParticulas !== null) {
-    clearInterval(intervaloParticulas);
-    intervaloParticulas = null;
+function stopParticles() {
+  if (particleInterval !== null) {
+    clearInterval(particleInterval);
+    particleInterval = null;
   }
 }
 
-const AMPLITUD_IDLE = 0.15;
-const AMPLITUD_PENSANDO = 0.45;
+const IDLE_AMPLITUDE = 0.15;
+const THINKING_AMPLITUDE = 0.45;
 
 const wave = new SiriWave({
-  container: document.getElementById("onda"),
+  container: document.getElementById("wave"),
   style: "ios9",
   color: "#7c5cff",
   speed: 0.06,
-  amplitude: AMPLITUD_IDLE,
+  amplitude: IDLE_AMPLITUDE,
   autostart: true,
 });
 
-let estado = "idle";
-let nivelCrudo = 0;
-let nivelSuave = AMPLITUD_IDLE;
+let state = "idle";
+let rawLevel = 0;
+let smoothLevel = IDLE_AMPLITUDE;
 
-const ATAQUE = 0.7;       // qué tan rápido sube la amplitud al hablar
-const DECAIMIENTO = 0.25; // más rápido que antes (0.08): con eso la onda
-                          // quedaba "abierta" en los silencios entre
-                          // palabras, se veía desacoplada del audio real.
+const ATTACK = 0.7; // how fast the amplitude rises while speaking
+const DECAY = 0.25; // faster than before (0.08): with that, the wave stayed
+                    // "open" during the silences between words, it looked
+                    // decoupled from the real audio.
 
-function amplitudObjetivo() {
-  // "escuchando" también sigue el nivel real -- ahora es el mic en vivo,
-  // no un valor fijo (así se ve mover con la voz del usuario).
-  if (estado === "hablando" || estado === "musica" || estado === "escuchando") return nivelCrudo;
-  if (estado === "pensando") return AMPLITUD_PENSANDO;
-  return AMPLITUD_IDLE;
+function targetAmplitude() {
+  // "listening" also follows the real level -- it is the live mic now, not
+  // a fixed value (so it visibly moves with the user's voice).
+  if (state === "speaking" || state === "music" || state === "listening") return rawLevel;
+  if (state === "thinking") return THINKING_AMPLITUDE;
+  return IDLE_AMPLITUDE;
 }
 
-function animar() {
-  const objetivo = amplitudObjetivo();
-  const tasa = objetivo > nivelSuave ? ATAQUE : DECAIMIENTO;
-  nivelSuave += (objetivo - nivelSuave) * tasa;
-  wave.setAmplitude(nivelSuave);
-  // La velocidad de la onda también sigue el nivel: antes era fija
-  // mientras hablaba, y una onda moviéndose siempre igual sin importar
-  // qué tan fuerte suena la voz es justo lo que se veía desacoplado.
-  if (estado === "hablando" || estado === "musica" || estado === "escuchando") {
-    wave.setSpeed(0.04 + nivelSuave * 0.18);
+function animate() {
+  const target = targetAmplitude();
+  const rate = target > smoothLevel ? ATTACK : DECAY;
+  smoothLevel += (target - smoothLevel) * rate;
+  wave.setAmplitude(smoothLevel);
+  // The wave speed follows the level too: it used to be fixed while
+  // speaking, and a wave always moving the same regardless of how loud the
+  // voice is, is exactly what looked decoupled.
+  if (state === "speaking" || state === "music" || state === "listening") {
+    wave.setSpeed(0.04 + smoothLevel * 0.18);
   }
-  requestAnimationFrame(animar);
+  requestAnimationFrame(animate);
 }
-requestAnimationFrame(animar);
+requestAnimationFrame(animate);
 
-// Mutter no respeta "siempre encima" de forma persistente: si el usuario
-// foca otra ventana mientras Tero habla, el soul-connector cae atrás igual aunque
-// se haya traído al frente al empezar. Como no hay layer-shell, se
-// reintenta a repetición mientras dura el habla, no solo una vez al
-// arrancar -- molesto pero es lo que hay sin tocar el compositor.
-let intervaloFrente = null;
+// Mutter does not honor "always on top" persistently: if the user focuses
+// another window while Tero speaks, the soul-connector falls behind anyway
+// even though it was brought to the front when it started. Since there is
+// no layer-shell, it retries repeatedly for as long as the speech lasts,
+// not just once at the start -- annoying, but it is what there is without
+// touching the compositor.
+let frontInterval = null;
 
-function empezarATraerAlFrente() {
-  if (intervaloFrente !== null || !window.pywebview) return;
-  window.pywebview.api.traer_al_frente();
-  intervaloFrente = setInterval(() => {
-    window.pywebview.api.traer_al_frente();
+function startBringingToFront() {
+  if (frontInterval !== null || !window.pywebview) return;
+  window.pywebview.api.bring_to_front();
+  frontInterval = setInterval(() => {
+    window.pywebview.api.bring_to_front();
   }, 400);
 }
 
-function dejarDeTraerAlFrente() {
-  if (intervaloFrente !== null) {
-    clearInterval(intervaloFrente);
-    intervaloFrente = null;
+function stopBringingToFront() {
+  if (frontInterval !== null) {
+    clearInterval(frontInterval);
+    frontInterval = null;
   }
 }
 
-// El estilo "ios9" de SiriWave ignora el color pasado al constructor: trae
-// sus curvas hardcodeadas en azul/rojo/verde (ver iOS9Curve.getDefinition()
-// en siriwave.umd.js) y las dibuja con su propio color fijo, no con el de
-// la instancia. Por eso cambiar COLORES/el drop-shadow de afuera nunca
-// pintaba la onda en sí -- solo el brillo alrededor. Acá se recolorean a
-// mano las curvas reales (menos la "support line" blanca de fondo, que se
-// deja como viene) cada vez que cambia el estado.
-function hexARgb(hex) {
+// SiriWave's "ios9" style ignores the color passed to the constructor: it
+// brings its curves hardcoded in blue/red/green (see
+// iOS9Curve.getDefinition() in siriwave.umd.js) and draws them with its own
+// fixed color, not the instance one. That is why changing COLORS or the
+// drop-shadow from outside never painted the wave itself -- only the glow
+// around it. Here the real curves are recolored by hand (except the white
+// background "support line", left as it comes) every time the state
+// changes.
+function hexToRgb(hex) {
   const n = parseInt(hex.replace("#", ""), 16);
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
-// Colores originales de la librería (multicolor: azul/rojo/verde) para
-// poder restaurarlos en "hablando" -- al usuario le gusta ese look
-// mientras Tero habla, y solo ese, así que es el único estado que no se
-// fuerza a un color plano.
-const COLORES_ORIGINALES_CURVAS = wave.curves.map((c) => c.definition.color);
+// The library's original colors (multicolor: blue/red/green) so they can be
+// restored on "speaking" -- the user likes that look while Tero speaks, and
+// only that one, so it is the only state not forced to a flat color.
+const ORIGINAL_CURVE_COLORS = wave.curves.map((c) => c.definition.color);
 
-function aplicarEstado(nuevo) {
-  const eraHablando = estado === "hablando";
-  const eraCodex = estado === "codex";
-  estado = nuevo;
-  wave.setSpeed(estado === "pensando" ? 0.12 : 0.06);
-  const color = COLORES[estado] || COLORES.idle;
-  document.getElementById("onda").style.filter =
+function applyState(next) {
+  const wasSpeaking = state === "speaking";
+  const wasCodex = state === "codex";
+  state = next;
+  wave.setSpeed(state === "thinking" ? 0.12 : 0.06);
+  const color = COLORS[state] || COLORS.idle;
+  document.getElementById("wave").style.filter =
     `drop-shadow(0 0 12px ${color})`;
-  if (estado === "hablando") {
-    wave.curves.forEach((curva, i) => {
-      curva.definition.color = COLORES_ORIGINALES_CURVAS[i];
+  if (state === "speaking") {
+    wave.curves.forEach((curve, i) => {
+      curve.definition.color = ORIGINAL_CURVE_COLORS[i];
     });
   } else {
-    const rgb = hexARgb(color);
-    for (const curva of wave.curves) {
-      if (!curva.definition.supportLine) curva.definition.color = rgb;
+    const rgb = hexToRgb(color);
+    for (const curve of wave.curves) {
+      if (!curve.definition.supportLine) curve.definition.color = rgb;
     }
   }
-  if (estado === "hablando" && !eraHablando) {
-    empezarATraerAlFrente();
-  } else if (estado !== "hablando" && eraHablando) {
-    dejarDeTraerAlFrente();
+  if (state === "speaking" && !wasSpeaking) {
+    startBringingToFront();
+  } else if (state !== "speaking" && wasSpeaking) {
+    stopBringingToFront();
   }
-  if (estado === "codex" && !eraCodex) {
-    empezarParticulas();
-  } else if (estado !== "codex" && eraCodex) {
-    pararParticulas();
+  if (state === "codex" && !wasCodex) {
+    startParticles();
+  } else if (state !== "codex" && wasCodex) {
+    stopParticles();
   }
 }
-// Recién acá es seguro llamarla: ya existen COLORES_ORIGINALES_CURVAS y
-// hexARgb. Llamarla más arriba, antes de que el const se declare, tira un
-// ReferenceError de TDZ que corta en seco el resto del script (incluido
-// el WebSocket y el loop de animación) -- pasó de verdad, por eso la
-// onda quedaba congelada y sin recolorear nunca.
-aplicarEstado("idle");
+// Only here is it safe to call: ORIGINAL_CURVE_COLORS and hexToRgb already
+// exist. Calling it further up, before the const is declared, throws a TDZ
+// ReferenceError that kills the rest of the script dead (including the
+// WebSocket and the animation loop) -- it actually happened, which is why
+// the wave sat frozen and never recolored.
+applyState("idle");
 
-// Progreso interpolado: el poll de Spotify llega cada ~5s, pero la
-// canción avanza continuamente. En vez de saltar cada 5s, se guarda el
-// progreso recibido + cuándo llegó, y cada frame se calcula dónde debería
-// estar "ahora" asumiendo que sigue sonando -- el próximo poll corrige
-// cualquier desvío (pausa, salto de tema) solo.
-let progresoBase = 0;
-let duracionMs = 0;
-let momentoRecibido = 0;
-let reproduciendoAlgo = false;
-let pausado = false;
+// Interpolated progress: the Spotify poll arrives every ~5s, but the song
+// advances continuously. Instead of jumping every 5s, the received progress
+// is stored along with when it arrived, and every frame computes where it
+// should be "now" assuming it is still playing -- the next poll corrects any
+// drift (a pause, a track skip) on its own.
+let baseProgress = 0;
+let durationMs = 0;
+let receivedAt = 0;
+let somethingPlaying = false;
+let paused = false;
 
-function formatearTiempo(ms) {
-  const totalSeg = Math.max(0, Math.floor(ms / 1000));
-  const min = Math.floor(totalSeg / 60);
-  const seg = totalSeg % 60;
-  return `${min}:${String(seg).padStart(2, "0")}`;
+function formatTime(ms) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function aplicarCancion(info) {
-  const elInfo = document.getElementById("info");
-  const elProgreso = document.getElementById("fila-progreso");
+function applySong(info) {
+  const infoEl = document.getElementById("info");
+  const progressEl = document.getElementById("progress-row");
   if (!info) {
-    // Los segundos transcurridos/restantes viven en #fila-progreso, un
-    // bloque aparte de #info -- ocultar solo #info dejaba el tiempo (y la
-    // barra) visibles para siempre. Se ocultan los dos juntos.
-    reproduciendoAlgo = false;
-    elInfo.classList.remove("visible");
-    elProgreso.classList.remove("visible");
+    // The elapsed/remaining seconds live in #progress-row, a separate block
+    // from #info -- hiding only #info left the time (and the bar) visible
+    // forever. Both are hidden together.
+    somethingPlaying = false;
+    infoEl.classList.remove("visible");
+    progressEl.classList.remove("visible");
     return;
   }
-  document.getElementById("cancion").textContent = info.texto;
-  progresoBase = info.progreso_ms;
-  duracionMs = info.duracion_ms;
-  momentoRecibido = performance.now();
-  reproduciendoAlgo = true;
-  pausado = !info.reproduciendo;
-  document.getElementById("barra-relleno").classList.toggle("pausado", pausado);
-  elInfo.classList.add("visible");
-  elProgreso.classList.add("visible");
+  document.getElementById("song").textContent = info.text;
+  baseProgress = info.progress_ms;
+  durationMs = info.duration_ms;
+  receivedAt = performance.now();
+  somethingPlaying = true;
+  paused = !info.playing;
+  document.getElementById("bar-fill").classList.toggle("paused", paused);
+  infoEl.classList.add("visible");
+  progressEl.classList.add("visible");
 }
 
-function animarProgreso() {
-  if (reproduciendoAlgo && duracionMs > 0) {
-    // En pausa no se suma tiempo transcurrido: el progreso queda
-    // congelado en lo último que reportó Spotify, no sigue avanzando.
-    const transcurridoReal = pausado ? 0 : performance.now() - momentoRecibido;
-    const progresoMs = Math.min(duracionMs, progresoBase + transcurridoReal);
-    document.getElementById("barra-relleno").style.width =
-      `${(progresoMs / duracionMs) * 100}%`;
-    document.getElementById("tiempo-actual").textContent = formatearTiempo(progresoMs);
-    document.getElementById("tiempo-total").textContent = formatearTiempo(duracionMs);
+function animateProgress() {
+  if (somethingPlaying && durationMs > 0) {
+    // While paused no elapsed time is added: the progress stays frozen on
+    // whatever Spotify last reported, it does not keep advancing.
+    const elapsed = paused ? 0 : performance.now() - receivedAt;
+    const progressMs = Math.min(durationMs, baseProgress + elapsed);
+    document.getElementById("bar-fill").style.width =
+      `${(progressMs / durationMs) * 100}%`;
+    document.getElementById("time-current").textContent = formatTime(progressMs);
+    document.getElementById("time-total").textContent = formatTime(durationMs);
   }
-  requestAnimationFrame(animarProgreso);
+  requestAnimationFrame(animateProgress);
 }
-requestAnimationFrame(animarProgreso);
+requestAnimationFrame(animateProgress);
 
-function conectar() {
+function connect() {
   const ws = new WebSocket("ws://127.0.0.1:8765");
   ws.onmessage = (ev) => {
-    const datos = JSON.parse(ev.data);
-    if (datos.estado !== undefined) aplicarEstado(datos.estado);
-    if (datos.nivel !== undefined) nivelCrudo = datos.nivel;
-    if (datos.cancion !== undefined) aplicarCancion(datos.cancion);
+    const data = JSON.parse(ev.data);
+    if (data.state !== undefined) applyState(data.state);
+    if (data.level !== undefined) rawLevel = data.level;
+    if (data.song !== undefined) applySong(data.song);
   };
-  ws.onclose = () => setTimeout(conectar, 1000);
+  ws.onclose = () => setTimeout(connect, 1000);
   ws.onerror = () => ws.close();
 }
-conectar();
+connect();
 </script>
 </body>
 </html>

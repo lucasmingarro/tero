@@ -1,76 +1,76 @@
 #!/usr/bin/env bash
-# Levanta Tero completo: daemon + soul-connector. Ctrl+C corta los dos.
+# Brings up all of Tero: daemon + soul-connector. Ctrl+C stops both.
 #
-# Verifica las dependencias externas antes de arrancar (Ollama, el modelo,
-# token de Spotify, binarios de sistema) en vez de dejar que cada una
-# falle más tarde y por separado, adentro del daemon, donde el error
-# aparece como un traceback a mitad de una conversación.
+# It checks the external dependencies before starting (Ollama, the model,
+# the Spotify token, system binaries) instead of letting each one fail
+# later and separately, inside the daemon, where the error shows up as a
+# traceback in the middle of a conversation.
 #
-# El chequeo de instancia única no es decorativo: dos daemons a la vez
-# cargan dos veces Whisper large-v3 en la GPU y el segundo muere con
-# "CUDA failed with error out of memory" (pasado de verdad).
+# The single-instance check is not decorative: two daemons at once load
+# Whisper large-v3 twice on the GPU and the second one dies with "CUDA
+# failed with error out of memory" (actually happened).
 
 set -uo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")" || exit 1
 
-DIR_LOGS="logs"
-LOG="$DIR_LOGS/tero.log"
-LOG_SOUL_CONNECTOR="$DIR_LOGS/soul_connector.log"
-LOCK="$DIR_LOGS/.lock"
+LOGS_DIR="logs"
+LOG="$LOGS_DIR/tero.log"
+LOG_SOUL_CONNECTOR="$LOGS_DIR/soul_connector.log"
+LOCK="$LOGS_DIR/.lock"
 
-ESPERA_DAEMON_S=180 # la primera vez Whisper se baja de HuggingFace
-ESPERA_SOUL_CONNECTOR_S=30
+DAEMON_WAIT_S=180 # the first time, Whisper is downloaded from HuggingFace
+SOUL_CONNECTOR_WAIT_S=30
 
-mkdir -p "$DIR_LOGS"
+mkdir -p "$LOGS_DIR"
 
 if [ -t 1 ]; then
-  C_OK=$'\033[32m'; C_MAL=$'\033[31m'; C_AVISO=$'\033[33m'
-  C_TENUE=$'\033[2m'; C_FIN=$'\033[0m'
+  C_OK=$'\033[32m'; C_BAD=$'\033[31m'; C_WARN=$'\033[33m'
+  C_DIM=$'\033[2m'; C_END=$'\033[0m'
 else
-  C_OK=""; C_MAL=""; C_AVISO=""; C_TENUE=""; C_FIN=""
+  C_OK=""; C_BAD=""; C_WARN=""; C_DIM=""; C_END=""
 fi
 
-_a_log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$1" >>"$LOG"; }
-paso()  { printf '  %s…%s %s\n' "$C_TENUE" "$C_FIN" "$1"; _a_log "-> $1"; }
-ok()    { printf '  %s✓%s %s\n' "$C_OK" "$C_FIN" "$1";    _a_log "ok: $1"; }
-aviso() { printf '  %s!%s %s\n' "$C_AVISO" "$C_FIN" "$1"; _a_log "aviso: $1"; }
-error() { printf '  %s✗%s %s\n' "$C_MAL" "$C_FIN" "$1";   _a_log "ERROR: $1"; }
+_to_log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$1" >>"$LOG"; }
+step()  { printf '  %s…%s %s\n' "$C_DIM" "$C_END" "$1"; _to_log "-> $1"; }
+ok()    { printf '  %s✓%s %s\n' "$C_OK" "$C_END" "$1";  _to_log "ok: $1"; }
+warn()  { printf '  %s!%s %s\n' "$C_WARN" "$C_END" "$1"; _to_log "aviso: $1"; }
+error() { printf '  %s✗%s %s\n' "$C_BAD" "$C_END" "$1";  _to_log "ERROR: $1"; }
 
 PID_DAEMON=""
 PID_SOUL_CONNECTOR=""
 PID_TAIL=""
-YA_MATE=0
+ALREADY_KILLED=0
 
-matar() {
-  # El trap está en EXIT además de INT/TERM, así que sin este guard corre
-  # dos veces (una por la señal, otra por la salida) y saluda dos veces.
-  [ $YA_MATE -eq 1 ] && return
-  YA_MATE=1
+kill_all() {
+  # The trap is on EXIT as well as INT/TERM, so without this guard it runs
+  # twice (once for the signal, once for the exit) and says goodbye twice.
+  [ $ALREADY_KILLED -eq 1 ] && return
+  ALREADY_KILLED=1
   printf '\n'
-  # El tail primero: `wait` de abajo se cuelga para siempre si sigue vivo
-  # (es un hijo más del script, y `tail -f` no termina solo).
+  # The tail first: the `wait` below hangs forever if it is still alive
+  # (it is another child of the script, and `tail -f` never ends on its own).
   [ -n "$PID_TAIL" ] && kill -TERM "$PID_TAIL" 2>/dev/null
   for pid in "$PID_SOUL_CONNECTOR" "$PID_DAEMON"; do
     [ -n "$pid" ] || continue
-    # Al hijo real (python) además del padre: `uv run` es un wrapper y
-    # matarlo solo a él puede dejar el python huérfano y vivo.
+    # The real child (python) as well as the parent: `uv run` is a wrapper
+    # and killing only it can leave the python orphaned and alive.
     pkill -TERM -P "$pid" 2>/dev/null
     kill -TERM "$pid" 2>/dev/null
   done
   wait "$PID_DAEMON" "$PID_SOUL_CONNECTOR" 2>/dev/null
-  _a_log "Tero cortado."
-  printf '%sChau.%s\n' "$C_TENUE" "$C_FIN"
+  _to_log "Tero cortado."
+  printf '%sChau.%s\n' "$C_DIM" "$C_END"
 }
-trap matar EXIT INT TERM
+trap kill_all EXIT INT TERM
 
-printf '\n%sTero%s\n' "$C_TENUE" "$C_FIN"
+printf '\n%sTero%s\n' "$C_DIM" "$C_END"
 
-# --- una sola instancia ---------------------------------------------------
-# Esto va ANTES de tocar el log: si una segunda corrida rotara el log y
-# después se rechazara a sí misma, le dejaría el log truncado a la corrida
-# buena, que se queda esperando para siempre una línea que ya no está
-# (pasó de verdad al probar el script).
+# --- single instance ------------------------------------------------------
+# This goes BEFORE touching the log: if a second run rotated the log and
+# then rejected itself, it would leave the good run with a truncated log,
+# and that run waits forever for a line that is no longer there (actually
+# happened while testing the script).
 exec 9>"$LOCK"
 if ! flock -n 9; then
   error "Ya hay un Tero corriendo (lanzado con este mismo script)."
@@ -79,158 +79,159 @@ fi
 if pgrep -f "$PWD/.venv/bin/python.* main.py" >/dev/null 2>&1; then
   error "Ya hay un daemon de Tero corriendo, lanzado a mano y por fuera de este script."
   printf '      Cortalo con: %spkill -f "%s/.venv/bin/python.* main.py"%s\n' \
-    "$C_TENUE" "$PWD" "$C_FIN"
+    "$C_DIM" "$PWD" "$C_END"
   exit 1
 fi
 
-# Log nuevo por corrida, conservando el anterior: si algo falló recién, el
-# log de esa corrida no se pierde al reintentar.
+# A fresh log per run, keeping the previous one: if something just failed,
+# that run's log is not lost on the retry.
 [ -f "$LOG" ] && mv -f "$LOG" "$LOG.1"
 : >"$LOG"
 
 ok "No hay otra instancia corriendo"
 
-# --- dependencias ---------------------------------------------------------
+# --- dependencies ---------------------------------------------------------
 if ! curl -sf --max-time 5 http://localhost:11434/api/tags >/dev/null 2>&1; then
   error "Ollama no responde en localhost:11434."
-  printf '      Arrancalo con: %ssystemctl start ollama%s\n' "$C_TENUE" "$C_FIN"
+  printf '      Arrancalo con: %ssystemctl start ollama%s\n' "$C_DIM" "$C_END"
   exit 1
 fi
 
-MODELO=$(awk '/^\[cerebro\]/{f=1;next} /^\[/{f=0} f && /^ *modelo/ {gsub(/.*= *"|"/,""); print; exit}' config.toml)
-if [ -n "$MODELO" ] && ! curl -sf --max-time 5 http://localhost:11434/api/tags | grep -q "\"$MODELO\""; then
-  error "Ollama anda pero no tiene el modelo '$MODELO'."
-  printf '      Bajalo con: %sollama pull %s%s\n' "$C_TENUE" "$MODELO" "$C_FIN"
+MODEL=$(awk '/^\[brain\]/{f=1;next} /^\[/{f=0} f && /^ *model/ {gsub(/.*= *"|"/,""); print; exit}' config.toml)
+if [ -n "$MODEL" ] && ! curl -sf --max-time 5 http://localhost:11434/api/tags | grep -q "\"$MODEL\""; then
+  error "Ollama anda pero no tiene el modelo '$MODEL'."
+  printf '      Bajalo con: %sollama pull %s%s\n' "$C_DIM" "$MODEL" "$C_END"
   exit 1
 fi
-ok "Ollama activo${MODELO:+ (modelo $MODELO)}"
+ok "Ollama activo${MODEL:+ (modelo $MODEL)}"
 
 if [ -f "$HOME/.config/tero/spotify_token.json" ]; then
   ok "Spotify logueado"
 else
-  aviso "Spotify sin loguear: la música no va a andar (uv run python -m herramientas._spotify_auth)"
+  warn "Spotify sin loguear: la música no va a andar (uv run python -m tools._spotify_auth)"
 fi
 
 if [ -s "$HOME/.config/tero/groq_key" ]; then
   ok "Transcripción: Groq online (Whisper local de respaldo si falla)"
 else
-  aviso "Sin key de Groq (~/.config/tero/groq_key): transcripción 100% local, se carga Whisper al arrancar"
+  warn "Sin key de Groq (~/.config/tero/groq_key): transcripción 100% local, se carga Whisper al arrancar"
 fi
 
-faltantes=""
-for binario in playerctl wpctl pw-dump wmctrl notify-send; do
-  command -v "$binario" >/dev/null 2>&1 || faltantes="$faltantes $binario"
+missing=""
+for binary in playerctl wpctl pw-dump wmctrl notify-send; do
+  command -v "$binary" >/dev/null 2>&1 || missing="$missing $binary"
 done
-if [ -n "$faltantes" ]; then
-  aviso "Faltan binarios de sistema:$faltantes (ver INSTALACIONES.md)"
+if [ -n "$missing" ]; then
+  warn "Faltan binarios de sistema:$missing (ver INSTALACIONES.md)"
 else
   ok "Binarios de sistema presentes"
 fi
 
 # --- daemon ---------------------------------------------------------------
 if [ -s "$HOME/.config/tero/groq_key" ]; then
-  paso "Arrancando el daemon (carga la voz; Whisper local solo si Groq falla)"
+  step "Arrancando el daemon (carga la voz; Whisper local solo si Groq falla)"
 else
-  paso "Arrancando el daemon (carga Whisper y la voz, tarda unos segundos)"
+  step "Arrancando el daemon (carga Whisper y la voz, tarda unos segundos)"
 fi
 uv run python main.py >>"$LOG" 2>&1 &
 PID_DAEMON=$!
 
-hito_stt=0
-hito_tts=0
-hito_llm=0
-listo=0
-stt_local=0 # 1 si esta corrida cargó Whisper local (no Groq) para transcribir
-for _ in $(seq $((ESPERA_DAEMON_S * 2))); do
+stt_seen=0
+tts_seen=0
+llm_seen=0
+ready=0
+stt_local=0 # 1 if this run loaded local Whisper (not Groq) to transcribe
+for _ in $(seq $((DAEMON_WAIT_S * 2))); do
   if ! kill -0 "$PID_DAEMON" 2>/dev/null; then
     error "El daemon se murió al arrancar. Últimas líneas:"
     tail -n 15 "$LOG" | sed 's/^/      /'
     exit 1
   fi
-  if [ $hito_stt -eq 0 ] && grep -q "STT: Groq online" "$LOG"; then
-    hito_stt=1
+  if [ $stt_seen -eq 0 ] && grep -q "STT: Groq online" "$LOG"; then
+    stt_seen=1
   fi
-  if [ $hito_stt -eq 0 ] && grep -q "Cargando modelo de transcripción" "$LOG"; then
-    hito_stt=1; stt_local=1; paso "Cargando el modelo de transcripción"
+  if [ $stt_seen -eq 0 ] && grep -q "Cargando modelo de transcripción" "$LOG"; then
+    stt_seen=1; stt_local=1; step "Cargando el modelo de transcripción"
   fi
-  if [ $hito_tts -eq 0 ] && grep -q "Cargando voz" "$LOG"; then
-    hito_tts=1
+  if [ $tts_seen -eq 0 ] && grep -q "Cargando voz" "$LOG"; then
+    tts_seen=1
     [ $stt_local -eq 1 ] && ok "Modelo de transcripción cargado"
-    paso "Cargando la voz"
+    step "Cargando la voz"
   fi
-  if [ $hito_llm -eq 0 ] && grep -q "Cargando modelo de lenguaje" "$LOG"; then
-    hito_llm=1; ok "Voz cargada"; paso "Cargando el modelo de lenguaje (recién reiniciada la máquina tarda)"
+  if [ $llm_seen -eq 0 ] && grep -q "Cargando modelo de lenguaje" "$LOG"; then
+    llm_seen=1; ok "Voz cargada"; step "Cargando el modelo de lenguaje (recién reiniciada la máquina tarda)"
   fi
-  if grep -q "Tero escuchando" "$LOG"; then listo=1; break; fi
+  if grep -q "Tero escuchando" "$LOG"; then ready=1; break; fi
   sleep 0.5
 done
 
-if [ $listo -eq 0 ]; then
-  error "El daemon no terminó de arrancar en ${ESPERA_DAEMON_S}s. Últimas líneas:"
+if [ $ready -eq 0 ]; then
+  error "El daemon no terminó de arrancar en ${DAEMON_WAIT_S}s. Últimas líneas:"
   tail -n 15 "$LOG" | sed 's/^/      /'
   exit 1
 fi
 ok "Modelo de lenguaje cargado"
-TECLA=$(grep -m1 "Tero escuchando" "$LOG" | sed 's/.*Mantené \(.*\) para hablar.*/\1/')
-ok "Daemon escuchando${TECLA:+ (tecla: $TECLA)}"
+KEY=$(grep -m1 "Tero escuchando" "$LOG" | sed 's/.*Mantené \(.*\) para hablar.*/\1/')
+ok "Daemon escuchando${KEY:+ (tecla: $KEY)}"
 
-# --- soul-connector ---------------------------------------------------------------
-# Cliente opcional: si no levanta, el daemon sigue andando igual (es una
-# regla del proyecto, no una casualidad). Por eso acá nunca se sale con
-# error, solo se avisa.
+# --- soul-connector -------------------------------------------------------
+# An optional client: if it does not come up, the daemon keeps working
+# anyway (that is a project rule, not a coincidence). Which is why this
+# section never exits with an error, it only warns.
 
-# Si está puesto el soul-connector como extensión de GNOME
-# (soul-connector-gnome/), ya hay uno dibujándose adentro de gnome-shell:
-# levantar además el de pywebview pondría dos ondas superpuestas, y la
-# pesada de las dos.
+# If the soul-connector is installed as a GNOME extension
+# (soul-connector-gnome/), there is already one drawing itself inside
+# gnome-shell: starting the pywebview one as well would put two overlapping
+# waves on screen, and the heavier of the two.
 if gnome-extensions list --enabled 2>/dev/null | grep -q "^soul-connector@tero.local$"; then
   ok "Soul-connector: usando la extensión de GNOME (no hace falta la de pywebview)"
-  SOUL_CONNECTOR_POR_EXTENSION=1
+  SOUL_CONNECTOR_FROM_EXTENSION=1
 else
-  SOUL_CONNECTOR_POR_EXTENSION=0
+  SOUL_CONNECTOR_FROM_EXTENSION=0
 fi
 
-if [ $SOUL_CONNECTOR_POR_EXTENSION -eq 0 ]; then
-paso "Arrancando el soul-connector (overlay)"
+if [ $SOUL_CONNECTOR_FROM_EXTENSION -eq 0 ]; then
+step "Arrancando el soul-connector (overlay)"
 : >"$LOG_SOUL_CONNECTOR"
-QT_QPA_PLATFORM=xcb uv run python -m soul_connector.ventana >>"$LOG_SOUL_CONNECTOR" 2>&1 &
+QT_QPA_PLATFORM=xcb uv run python -m soul_connector.window >>"$LOG_SOUL_CONNECTOR" 2>&1 &
 PID_SOUL_CONNECTOR=$!
 
-soul_connector_listo=0
-for _ in $(seq $((ESPERA_SOUL_CONNECTOR_S * 2))); do
+soul_connector_ready=0
+for _ in $(seq $((SOUL_CONNECTOR_WAIT_S * 2))); do
   if ! kill -0 "$PID_SOUL_CONNECTOR" 2>/dev/null; then break; fi
-  if wmctrl -l 2>/dev/null | grep -q "tero-soul-connector"; then soul_connector_listo=1; break; fi
+  if wmctrl -l 2>/dev/null | grep -q "tero-soul-connector"; then soul_connector_ready=1; break; fi
   sleep 0.5
 done
 
-if [ $soul_connector_listo -eq 1 ]; then
+if [ $soul_connector_ready -eq 1 ]; then
   ok "Soul-connector en pantalla"
 else
-  aviso "El soul-connector no levantó (el daemon sigue andando igual). Ver $LOG_SOUL_CONNECTOR"
+  warn "El soul-connector no levantó (el daemon sigue andando igual). Ver $LOG_SOUL_CONNECTOR"
 fi
-fi  # fin del bloque del soul-connector de pywebview
+fi  # end of the pywebview soul-connector block
 
-# --- listo ----------------------------------------------------------------
-printf '\n  %sTodo listo.%s Ctrl+C para cortar todo.\n' "$C_OK" "$C_FIN"
-printf '  %sLog: %s  ·  soul-connector: %s%s\n\n' "$C_TENUE" "$LOG" "$LOG_SOUL_CONNECTOR" "$C_FIN"
-_a_log "Todo listo (daemon $PID_DAEMON, soul-connector ${PID_SOUL_CONNECTOR:-—})."
+# --- ready ----------------------------------------------------------------
+printf '\n  %sTodo listo.%s Ctrl+C para cortar todo.\n' "$C_OK" "$C_END"
+printf '  %sLog: %s  ·  soul-connector: %s%s\n\n' "$C_DIM" "$LOG" "$LOG_SOUL_CONNECTOR" "$C_END"
+_to_log "Todo listo (daemon $PID_DAEMON, soul-connector ${PID_SOUL_CONNECTOR:-—})."
 
-# Log en vivo del daemon, que es lo que interesa mirar mientras se usa.
+# Live log of the daemon, which is what is worth watching while using it.
 tail -n 0 -f "$LOG" &
 PID_TAIL=$!
 
 
-# Si el daemon se cae solo, no dejar el script colgado mostrando un log muerto.
+# If the daemon dies on its own, do not leave the script hanging on a dead
+# log.
 wait "$PID_DAEMON"
-SALIDA_DAEMON=$?
+DAEMON_EXIT=$?
 kill "$PID_TAIL" 2>/dev/null
-# Si venimos de un Ctrl+C esto no es una caída, es lo que se pidió.
-if [ $YA_MATE -eq 0 ]; then
-  if [ "$SALIDA_DAEMON" -eq 3 ]; then
-    # Código 3 = el monitor de salud de salud.py decidió cerrar. No es una
-    # caída: el motivo ya está explicado en el log.
+# If we got here from a Ctrl+C this is not a crash, it is what was asked for.
+if [ $ALREADY_KILLED -eq 0 ]; then
+  if [ "$DAEMON_EXIT" -eq 3 ]; then
+    # Exit code 3 = the health monitor in health.py decided to close. Not a
+    # crash: the reason is already explained in the log.
     printf '\n'
-    aviso "Tero se cerró solo para cuidar el equipo:"
+    warn "Tero se cerró solo para cuidar el equipo:"
     grep "Cerrando Tero para cuidar el equipo" "$LOG" | tail -n 1 | sed 's/^.*equipo: /      /'
     exit 0
   fi

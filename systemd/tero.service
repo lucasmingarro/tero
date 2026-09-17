@@ -1,27 +1,26 @@
-# Servicio systemd de usuario para Tero. Resuelve el pendiente anotado en
-# CLAUDE.md ("Servicio: systemd user, no configurado todavía") y le da al
-# menú de configuración de GNOME (soul-connector-gnome/panel.js) algo
-# estable contra lo cual mandar start/stop/restart -- antes cada reinicio
-# durante el desarrollo era pkill + nohup a mano, frágil y sin forma de
-# consultar el estado desde otro proceso.
+# Systemd user service for Tero. It closes the pending item noted in
+# CLAUDE.md ("Servicio: systemd user, no configurado todavía") and gives the
+# GNOME settings menu (soul-connector-gnome/panel.js) something stable to
+# send start/stop/restart to -- before this, every restart during
+# development was pkill + nohup by hand, fragile and with no way to query
+# the state from another process.
 #
-# Instalación (ver INSTALACIONES.md):
+# Installation (see INSTALACIONES.md):
 #   ln -s ~/proyectos/tero/systemd/tero.service ~/.config/systemd/user/tero.service
 #   systemctl --user daemon-reload
-#   systemctl --user start tero      # arrancar ahora
-#   systemctl --user enable tero     # opcional: arrancar solo en cada login
+#   systemctl --user start tero      # start now
+#   systemctl --user enable tero     # optional: start on every login
 #
-# ./tero ya maneja señales de apagado correctamente (trap en INT/TERM que
-# corta el daemon y el soul-connector clásico si corresponde) y no
-# necesita una terminal -- por eso ExecStart apunta directo al script de
-# siempre, sin duplicar su lógica de arranque/logging acá.
+# ./tero already handles shutdown signals properly (a trap on INT/TERM that
+# stops the daemon and the classic soul-connector when applicable) and does
+# not need a terminal -- which is why ExecStart points straight at the usual
+# script, instead of duplicating its startup/logging logic here.
 
 [Unit]
 Description=Tero (asistente de voz push-to-talk)
-# No es un servicio de arranque temprano del sistema: necesita el bus de
-# sesión, PipeWire y (si la extensión de GNOME está activa) el propio
-# gnome-shell ya corriendo para que el soul-connector tenga a quién
-# conectarse.
+# This is not an early system boot service: it needs the session bus,
+# PipeWire and (if the GNOME extension is enabled) gnome-shell itself
+# already running, so the soul-connector has something to connect to.
 After=graphical-session.target
 PartOf=graphical-session.target
 
@@ -29,20 +28,20 @@ PartOf=graphical-session.target
 Type=simple
 WorkingDirectory=%h/proyectos/tero
 ExecStart=%h/proyectos/tero/tero
-# Nunca reiniciar solo: si salud.py cortó por RAM crítica (código 3) o el
-# daemon se cayó por un bug real, revivirlo automáticamente repetiría el
-# mismo problema en vez de dejar que el usuario lo vea y decida. Mismo
-# criterio que ya está documentado para salud.py: avisar, no auto-curar.
+# Never restart on its own: if health.py shut down over critical RAM (exit
+# code 3) or the daemon crashed on a real bug, reviving it automatically
+# would repeat the same problem instead of letting the user see it and
+# decide. The same criterion already documented for health.py: warn, do not
+# self-heal.
 Restart=no
-# KillMode=process (no el "control-group" por defecto de systemd): el
-# default manda la señal de apagado a TODO el cgroup del servicio, y
-# Chrome (la ventana dedicada de YouTube, herramientas/_pantalla_
-# youtube.py) queda ahí adentro por ser un hijo del daemon -- un reinicio
-# del servicio se la llevaba puesta (confirmado en vivo: el usuario
-# estaba viendo un canal y se le cerró solo al reiniciar Tero por un
-# cambio de prompt). `./tero` ya sabe cerrar sus propios hijos reales
-# (daemon, soul-connector clásico) con su propio trap de INT/TERM -- no
-# hace falta que systemd mate de más por encima.
+# KillMode=process (not systemd's default "control-group"): the default
+# sends the shutdown signal to the WHOLE service cgroup, and Chrome (the
+# dedicated YouTube window, tools/_youtube_screen.py) sits in there as a
+# child of the daemon -- a service restart took it down with it (confirmed
+# live: the user was watching a channel and it closed on him when Tero was
+# restarted over a prompt change). `./tero` already knows how to close its
+# own real children (daemon, classic soul-connector) with its own INT/TERM
+# trap -- systemd does not need to kill extra on top.
 KillMode=process
 
 [Install]

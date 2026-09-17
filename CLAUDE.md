@@ -6,9 +6,15 @@ tecla dedicada.
 
 Desarrollo en **Linux** (GNOME/Wayland) — el proyecto arrancó directo acá,
 no hubo migración desde Windows pese a que secciones viejas de este
-documento lo daban por planificado (ver `plataforma/linux.py`, ya escrito
-y en uso; no existe `plataforma/windows.py`).
-Idioma del asistente y del código: **español**.
+documento lo daban por planificado (ver `os_platform/linux.py`, ya escrito
+y en uso; no existe `os_platform/windows.py`).
+
+Idioma del asistente: **español** (rioplatense). Idioma del código:
+**inglés** — identificadores, comentarios, docstrings y nombres de
+archivo. Siguen en castellano, a propósito, los textos que Tero dice en
+voz alta (los `return` de las herramientas), los mensajes de log y de
+error, y el prompt del sistema (`brain/prompt.py`): son lo que define cómo
+habla.
 
 ---
 
@@ -43,14 +49,14 @@ audio abierta consumiendo cuota. La tecla marca inicio y fin.
   o `Super+Espacio`.
 - **Barge-in**: si se aprieta la tecla mientras Tero está hablando, corta
   el audio al toque y arranca a grabar de una, sin esperar a que termine
-  la frase (`main.py`, `on_down`/`voz/tts.py`). Apretarla mientras todavía
+  la frase (`main.py`, `on_down`/`voice/tts.py`). Apretarla mientras todavía
   está transcribiendo/pensando (nada sonando todavía) se ignora a
   propósito, para no tener dos turnos procesándose en paralelo.
 
 ### Cerebro: modelo local + Codex como herramienta
 
 **No hay un clasificador que decida entre local y nube.** El modelo local
-ve el catálogo de herramientas, y una de ellas es `delegar_a_codex`. El
+ve el catálogo de herramientas, y una de ellas es `delegate_to_codex`. El
 ruteo sale gratis del tool calling.
 
 Regla dura: **Codex nunca contesta preguntas, solo hace trabajo sobre
@@ -124,7 +130,7 @@ del servidor) -- nunca al arrancar. Al fallar, Tero avisa por voz
 ("Pasando a modo offline, esperá que cargo Whisper") y sigue con el mismo
 audio, sin pedir que se repita el pedido. Cuando Groq vuelve a responder,
 suelta la referencia al modelo local (libera la VRAM) y avisa "Volví a
-modo online". Implementado en `voz/stt.py` (`STTHibrido`). Sin key de
+modo online". Implementado en `voice/stt.py` (`HybridSTT`). Sin key de
 Groq, el comportamiento es el de siempre: 100% local, cargado al
 arrancar.
 
@@ -141,7 +147,7 @@ artistas); se subió a `large-v3` a pedido explícito del usuario
 ("prefiero un modelo un poco más lento pero que funcione").
 
 La fila de Windows es la tabla de diseño original — nunca se llegó a
-escribir `plataforma/windows.py`, el desarrollo fue siempre en Linux.
+escribir `os_platform/windows.py`, el desarrollo fue siempre en Linux.
 
 ---
 
@@ -150,16 +156,20 @@ escribir `plataforma/windows.py`, el desarrollo fue siempre en Linux.
 ```
 tero/
   main.py            bucle principal
-  plataforma/        base.py, linux.py (no hay windows.py, ver más arriba)
-  voz/               stt.py, tts.py
-  cerebro/           router.py, prompt.py
-  herramientas/      musica.py, clima.py, web.py, mapas.py, celular.py,
-                     terminal.py, tiempo.py, volumen.py, youtube.py,
-                     _spotify_auth.py, _telegram.py, _ducking.py,
-                     _pantalla_youtube.py, codex.py (fase 4)
-  soul_connector/    server.py, ventana.py, audio_sistema.py, index.html,
+  health.py          vigilancia de RAM/VRAM/temperatura
+  os_platform/       base.py, linux.py (no hay windows.py, ver más arriba)
+  voice/             stt.py, tts.py
+  brain/             router.py, prompt.py
+  tools/             music.py, weather.py, web.py, maps.py, phone.py,
+                     terminal.py, clock.py, volume.py, youtube.py,
+                     move_window.py, _spotify_auth.py, _telegram.py,
+                     _ducking.py, _youtube_screen.py,
+                     _youtube_favorites.py, _read_terminal_atspi.py,
+                     codex.py (fase 4)
+  soul_connector/    server.py, window.py, system_audio.py, index.html,
                      siriwave.umd.js (vendorizada)
-  soul-connector-gnome/  extension.js, onda.js, barra.js, mover.js, enlace.js
+  soul-connector-gnome/  extension.js, wave.js, bar.js, move.js, link.js,
+                     particles.js, panel.js
                      (misma onda, como extensión de GNOME Shell)
   config.toml
 ```
@@ -170,13 +180,13 @@ Una sola interfaz de cinco funciones. El resto del programa nunca sabe en
 qué sistema corre. Migrar a Linux = escribir un archivo de ~150 líneas.
 
 ```python
-# plataforma/base.py
-class Plataforma:
-    def escuchar_tecla(self, on_down, on_up): ...
-    def ventana_activa(self) -> dict:         ...
-    def capturar_pantalla(self) -> bytes:     ...
-    def media(self, accion: str):             ...
-    def notificar(self, texto: str):          ...
+# os_platform/base.py
+class Platform:
+    def listen_key(self, on_down, on_up): ...
+    def active_window(self) -> dict:      ...
+    def capture_screen(self) -> bytes:    ...
+    def media(self, action: str):         ...
+    def notify(self, text: str):          ...
 ```
 
 El audio **no** entra en esta abstracción: `sounddevice` ya es
@@ -189,20 +199,21 @@ el esquema JSON que consume Ollama. Agregar una capacidad = un archivo de
 ~20 líneas, sin tocar el núcleo.
 
 ```python
-herramientas = [
-  reproducir_musica, reproducir_musica_aleatoria, control_media,
-  consultar_clima, abrir_url, buscar_en_sitio, ajustar_volumen,
-  leer_terminal, consultar_hora, calcular_viaje, mandar_al_celular,
-  reproducir_canal_youtube, abrir_youtube_general, sugerir_canales_youtube,
-  capturar_pantalla, delegar_a_codex          # salida de escape
+tools = [
+  play_music, play_random_music, control_playback,
+  get_weather, open_url, search_site, set_volume,
+  read_terminal, get_time, get_trip, send_to_phone,
+  play_youtube_channel, open_youtube, suggest_youtube_channels,
+  move_window_to_monitor,
+  capture_screen, delegate_to_codex          # salida de escape
 ]
 ```
 
-Catálogo completo ✅ salvo `capturar_pantalla` (fase 3, atado a
-`Plataforma.capturar_pantalla`) y `delegar_a_codex` (fase 4).
-`consultar_hora` no estaba en el plan original: se agregó porque el modelo
+Catálogo completo ✅ salvo `capture_screen` (fase 3, atado a
+`Platform.capture_screen`) y `delegate_to_codex` (fase 4).
+`get_time` no estaba en el plan original: se agregó porque el modelo
 local no tiene noción de reloj y "qué hora es"/"qué día es hoy" lo
-necesitan. `calcular_viaje` y `mandar_al_celular` tampoco estaban en el
+necesitan. `get_trip` y `send_to_phone` tampoco estaban en el
 plan original, surgieron de pedidos concretos del usuario (distancia a un
 lugar + mandarle la dirección al celular).
 
@@ -211,24 +222,24 @@ Notas por herramienta:
 - **Clima**: Open-Meteo. Sin clave, sin registro. Leer forecast horario y
   dejar que el modelo lo resuma en lenguaje natural.
 - **Música**: reproducción real vía la Web API de Spotify (OAuth PKCE, ver
-  `herramientas/_spotify_auth.py`), no solo abrir una búsqueda — necesario
+  `tools/_spotify_auth.py`), no solo abrir una búsqueda — necesario
   para que "poné X" realmente empiece a sonar X, y para que "siguiente"
-  tenga una cola de verdad detrás. `reproducir_musica` busca y encola el
-  resultado más varios favoritos al azar detrás; `reproducir_musica_
-  aleatoria` es para pedidos genéricos ("poné música") y elige de "Tus me
+  tenga una cola de verdad detrás. `play_music` busca y encola el
+  resultado más varios favoritos al azar detrás; `play_random_music`
+  es para pedidos genéricos ("poné música") y elige de "Tus me
   gusta" (scope `user-library-read`) en vez de repetir siempre lo mismo.
-  `control_media` usa `playerctl` (MPRIS) para play/pausa/siguiente/
+  `control_playback` usa `playerctl` (MPRIS) para play/pausa/siguiente/
   anterior sobre lo que ya esté sonando (Spotify, navegador, etc.) —
   requiere tenerlo instalado, no viene por defecto. Requiere Spotify
   Premium (la Web API no deja reproducir en cuentas free).
   **Música y YouTube se pausan mutuamente**: arrancar algo en
-  `reproducir_musica`/`reproducir_musica_aleatoria` pausa la ventana de
+  `play_music`/`play_random_music` pausa la ventana de
   YouTube (Chrome expone cada ventana con media como reproductor MPRIS
-  aparte, `chromium.instance<PID>` — ver `_pantalla_youtube.pausar()`),
-  y `reproducir_canal_youtube` pausa Spotify puntualmente
-  (`musica.pausar_spotify()`, apuntado a `-p spotify` a propósito, para
+  aparte, `chromium.instance<PID>` — ver `_youtube_screen.pause()`),
+  y `play_youtube_channel` pausa Spotify puntualmente
+  (`music.pause_spotify()`, apuntado a `-p spotify` a propósito, para
   no confundirse con el reproductor de la propia ventana de YouTube).
-  **Ducking** (`herramientas/_ducking.py`, no es una herramienta del
+  **Ducking** (`tools/_ducking.py`, no es una herramienta del
   modelo): mientras Tero escucha/piensa/habla, **todo lo que esté
   sonando en el sistema** baja al 10% — progresivo, no de golpe, regla
   global desde el 2026-09-14 (no una lista de apps conocidas: empezó
@@ -255,19 +266,19 @@ Notas por herramienta:
   propio volumen de cada stream de salida en PipeWire (`wpctl status` →
   "Streams", node id propio, no el sink del sistema) — instantáneo y no
   toca el sink que usa el TTS para salir.
-- **Mapas**: `calcular_viaje` geocodifica con Open-Meteo (misma API que el
+- **Mapas**: `get_trip` geocodifica con Open-Meteo (misma API que el
   clima, sin clave) y calcula distancia/tiempo real con el servidor demo
   de OSRM (gratis, sin clave), devolviendo también la URL real de Google
   Maps para la ruta.
-- **Celular**: `mandar_al_celular` manda texto/links al celular del
-  usuario vía un bot de Telegram personal (`herramientas/_telegram.py`) —
+- **Celular**: `send_to_phone` manda texto/links al celular del
+  usuario vía un bot de Telegram personal (`tools/_telegram.py`) —
   se eligió sobre GSConnect/Google Chat por simplicidad de setup.
-- **YouTube**: `reproducir_canal_youtube` abre en vivo el canal que el
-  usuario nombre — **texto libre, no una lista fija** (`herramientas/
+- **YouTube**: `play_youtube_channel` abre en vivo el canal que el
+  usuario nombre — **texto libre, no una lista fija** (`tools/
   youtube.py`). Empezó como un `Literal[...]` de siete canales
   hardcodeados y el usuario lo marcó como un antipatrón con razón: una
   lista cerrada no generaliza, ni el modelo puede llamar la herramienta
-  con algo fuera del enum. Ahora `herramientas/_youtube_favoritos.py`
+  con algo fuera del enum. Ahora `tools/_youtube_favorites.py`
   resuelve por aprendizaje: primero busca por parecido fonético
   (`difflib`) entre los canales ya conocidos (arranca con siete
   sembrados a mano, crece con el uso) — sin red, así "Bortegui" sigue
@@ -275,16 +286,16 @@ Notas por herramienta:
   mejor cuantas más veces se pida; si no hay nada parecido, busca en
   vivo en YouTube (scraping de resultados filtrados a canales, sin API
   key) y lo aprende para la próxima. Persistido en
-  `~/.config/tero/youtube_canales.json`. Arranca solo con sonido gracias a
+  `~/.config/tero/youtube_channels.json`. Arranca solo con sonido gracias a
   `--autoplay-policy=no-user-gesture-required` (sin esto, Chrome bloquea
   el autoplay con sonido en un perfil sin historial de interacción, que
-  es siempre el caso de este perfil dedicado). Sin canal nombrado, `abrir_youtube_general` abre la home y
+  es siempre el caso de este perfil dedicado). Sin canal nombrado, `open_youtube` abre la home y
   pregunta específico vs. novedades (única excepción a "nunca preguntar",
-  ver `cerebro/prompt.py`); `sugerir_canales_youtube` responde esa
+  ver `brain/prompt.py`); `suggest_youtube_channels` responde esa
   pregunta chequeando en vivo (`/live` de cada canal) y, de respaldo, el
   feed RSS por si subieron algo sin estar en vivo. Se abre siempre en una
   ventana de Chrome dedicada, fija en un monitor del escritorio del
-  usuario (`herramientas/_pantalla_youtube.py`) — necesita forzar
+  usuario (`tools/_youtube_screen.py`) — necesita forzar
   `--ozone-platform=x11` porque el Chrome nativo de Wayland no deja
   posicionar la ventana por código (ver detalle en `BITACORA.html`,
   2026-09-14). Un cambio de canal **navega la misma pestaña por CDP**
@@ -297,11 +308,11 @@ Notas por herramienta:
   arma la URL y se abre. Es instantáneo y no se rompe:
   `listado.mercadolibre.com.ar/zapatillas-adidas-talle-44`
   El agente con Playwright se reserva solo para lo que no se puede
-  parametrizar por URL. `buscar_en_sitio` generaliza esto a mercadolibre/
+  parametrizar por URL. `search_site` generaliza esto a mercadolibre/
   google/youtube/amazon/maps.
 - **Terminal**: sin tmux a propósito (el usuario no quiere cambiar cómo
   labura por esto). Se lee por **AT-SPI** (accesibilidad de escritorio,
-  `herramientas/_leer_terminal_atspi.py`, corrido con el Python del
+  `tools/_read_terminal_atspi.py`, corrido con el Python del
   sistema por subprocess porque PyGObject no está en el venv) si la
   ventana activa en ese instante expone un nodo de rol "terminal" — el
   caso de las terminales nativas de GTK/Qt (`ptyxis`, GNOME Terminal,
@@ -314,10 +325,10 @@ Notas por herramienta:
   tener algo copiado ahí para otra cosa y no quiere que Tero se lo lleve
   puesto.
 
-### `delegar_a_codex`
+### `delegate_to_codex`
 
 ```python
-def delegar_a_codex(tarea: str, directorio: str) -> str:
+def delegate_to_codex(task: str, directory: str) -> str:
     """Tareas sobre código o archivos del proyecto."""
 ```
 
@@ -352,11 +363,11 @@ describe la implementación original en pywebview.
 
 - Señal: RMS real, no solo del TTS. Tres fuentes según el estado:
   el audio del TTS mientras habla, el **micrófono en vivo** mientras
-  escucha (vía el callback de `sounddevice` en `Grabador`, con auto-gain
+  escucha (vía el callback de `sounddevice` en `Recorder`, con auto-gain
   contra el pico reciente de volumen — un multiplicador fijo no sirve
   porque el rms de un mic vive en una escala mucho más baja e
   impredecible que la del audio de TTS), y el audio de salida del sistema
-  (PipeWire, `soul_connector/audio_sistema.py`) cuando no pasa nada más.
+  (PipeWire, `soul_connector/system_audio.py`) cuando no pasa nada más.
 - **Suavizado asimétrico**: ataque rápido, decaimiento lento. Esto es lo
   que separa "se ve pro" de "se ve amateur". El RMS crudo tiembla.
 - Ventana: sin bordes, sin foco. "Siempre encima" no es persistente bajo
@@ -370,7 +381,7 @@ describe la implementación original en pywebview.
 - Colores por estado: la onda usa el estilo `"ios9"` de SiriWave, que
   ignora el color del constructor y trae sus curvas hardcodeadas en
   azul/rojo/verde — hay que recolorear las curvas a mano en cada cambio
-  de estado (ver `aplicarEstado()` en `index.html`) para que el color
+  de estado (ver `applyState()` en `index.html`) para que el color
   realmente cambie, no alcanza con el `drop-shadow` de afuera.
 - Cuatro estados visuales: **escuchando** (blanco, reactivo al mic),
   **pensando** (violeta claro), **hablando** (multicolor original de la
@@ -389,7 +400,7 @@ cliente opcional del stream de niveles.
 ## Servicio systemd y menú de GNOME ✅
 
 `systemd/tero.service` (unidad de usuario, `Restart=no` a propósito —
-mismo criterio que `salud.py`: avisar, no revivir solo si cortó por algo
+mismo criterio que `health.py`: avisar, no revivir solo si cortó por algo
 real) envuelve `./tero` sin duplicar su lógica de arranque/logging. Se
 instala con un symlink:
 
@@ -405,7 +416,7 @@ Si la extensión de GNOME del soul-connector está activa,
 GNOME (el de WiFi/Bluetooth/etc., arriba a la derecha) con Iniciar/
 Reiniciar/Cerrar/Ver log, controlando este mismo servicio por
 `systemctl --user` — relee el estado real cada 4s en vez de confiar en
-el último click, así que si `salud.py` corta a Tero solo o alguien lo
+el último click, así que si `health.py` corta a Tero solo o alguien lo
 para desde una terminal, el toggle lo nota igual. Es una pieza aparte de
 `extension.js` (se instancia en `enable()`/`disable()` junto con la
 onda), no depende de que el soul-connector esté dibujándose.
@@ -451,7 +462,7 @@ dos:
   querer: murió con `CUDA out of memory`. No rompe nada, pero esta GPU
   además maneja el escritorio, así que la presión de VRAM lo pone lento.
 
-`salud.py` vigila esto en segundo plano (cada 5 s) con un criterio simple:
+`health.py` vigila esto en segundo plano (cada 5 s) con un criterio simple:
 **la RAM corta, lo térmico solo avisa** (cortar por temperatura sería
 redundante con lo que la placa ya hace sola; solo corta si el slowdown por
 hardware se sostiene ~1 min, que ya habla de un problema de ventilación).
@@ -496,21 +507,21 @@ que `./tero` distingue de una caída de verdad.
    Lección para el futuro: si el modelo chico empieza a portarse mal,
    sospechar primero de lo que Tero le está metiendo en el contexto,
    antes de culpar al sampling o de agregar otra regla al prompt.
-3. **Contexto** — captura bajo demanda. `leer_terminal` migrado a AT-SPI
+3. **Contexto** — captura bajo demanda. `read_terminal` migrado a AT-SPI
    ✅ (ver Herramientas), sin ventana activa expuesta como dato aparte —
    se usa internamente solo para saber qué está enfocado, no se muestra
-   a ningún lado. Falta `capturar_pantalla`.
+   a ningún lado. Falta `capture_screen`.
 4. **Codex** — la rama pesada. No arrancado.
 5. **Soul-connector** ✅ — overlay con WebSocket, ver sección dedicada más arriba.
-6. **Linux** ✅ — `plataforma/linux.py` ya existe y funciona (desarrollo
+6. **Linux** ✅ — `os_platform/linux.py` ya existe y funciona (desarrollo
    pasó a Linux desde el arranque del proyecto; no hay
-   `plataforma/windows.py`).
+   `os_platform/windows.py`).
 
 Estado actual: **fases 1, 2, 5 y 6 completas y commiteadas.** Pendiente
 para retomar:
-- Fase 3 (Contexto): `leer_terminal` ya migrado a AT-SPI (2026-09-13).
-  Falta `capturar_pantalla` (depende de `Plataforma.capturar_pantalla`).
-- `delegar_a_codex` (fase 4) sigue sin arrancar.
+- Fase 3 (Contexto): `read_terminal` ya migrado a AT-SPI (2026-09-13).
+  Falta `capture_screen` (depende de `Platform.capture_screen`).
+- `delegate_to_codex` (fase 4) sigue sin arrancar.
 
 ---
 
